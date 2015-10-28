@@ -10,6 +10,7 @@ from itertools import tee
 import os
 import errno
 from pudb import set_trace
+import progressbar
 
 output_dir = "analysis"
 
@@ -897,8 +898,11 @@ def ReadFPTs(dir, lower_box, upper_box, nboxes):
 def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                                  ndim, nsweeps):
 
+    #first get the number of lines in the file
+    print("Counting number of lines in file...")
+    num_lines = sum(1 for line in open(opfilename, 'r'))
+    print("There are ", num_lines, "in file ", opfilename)
     opfile = open(opfilename, 'r')
-
     line = 0
     StepsInsideBox = 1
     nboxes = len(bounds) - 1
@@ -917,14 +921,18 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
 #   initialize two lists
     UpperFPTs = [[] for x in range(nboxes)]
     LowerFPTs = [[] for x in range(nboxes)]
-
     hits = 0
+    #set up progress bar
+    bar = progressbar.ProgressBar(maxval=num_lines,
+                                  widgets=[progressbar.Bar('=', '[', ']'), ' ',
+                                           progressbar.Percentage()])
+    bar.start()
     try:
         for linestring in opfile:
             line = line + 1
 
-            if line % 1000 == 0:
-                print('.', end="", flush=True)
+            #update progress bar
+            bar.update(line)
             linelist = linestring.split()
             """
             assert len(linelist) >= ndim + 1, 'Length of line ' + \
@@ -1364,8 +1372,8 @@ if __name__ == "__main__":
         mfpt = args.MFPTthreshold
     if args.nsweeps:
         nsweeps = args.nsweeps
-    if args.max_width:
-        max_width = args.max_width
+    if args.histogram_bin_width:
+        max_width = args.histogram_bin_width
     if args.threshold_file:
         threshold_file = args.threshold_file
     if args.reverse_boxes:
