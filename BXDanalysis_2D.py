@@ -10,7 +10,14 @@ from itertools import tee
 import os
 import errno
 from pudb import set_trace
-import progressbar
+try:
+    import progressbar
+    progress_bar = True
+except ImportError:
+    progress_bar = False
+    print("Warning: Could not find progressbar module. Try running:  ",
+          "\n\tpip install progressbar33\n This will allow for pretty",
+          "progress bar output")
 
 output_dir = "analysis"
 
@@ -250,10 +257,13 @@ def BXDanalysis(Filename, BoundsFilename, Ndim,
     kUpperList = []
     kLowerList = []
 
+    numlines = GetNumLinesInFile(Filename)
+
     print("Getting passage times for all boxes from trajectory")
     if read_fpts is False:
         fpt_lower_list, fpt_upper_list = GetFirstPassageTimesAllBoxes(
-            Filename, BoundaryList, BoxLowerID, BoxUpperID, Ndim, Nsweeps)
+            Filename, BoundaryList, BoxLowerID, BoxUpperID, Ndim, Nsweeps,
+            numlines)
     else:
         fpt_lower_list, fpt_upper_list = ReadFPTs(fpt_dir, BoxLowerID,
                                                   BoxUpperID, nBounds -1 )
@@ -286,7 +296,8 @@ def BXDanalysis(Filename, BoundsFilename, Ndim,
     # populate histogram
 
     if read_fpts is False:
-        hist_counts = FillHistogram(Filename, hist_planes, hist_centers, Ndim)
+        hist_counts = FillHistogram(Filename, hist_planes, hist_centers, Ndim,
+                                    numlines)
     else:
         hist_counts = ReadHistogram(hist_file)
         assert len(hist_counts) == len(hist_planes) - 1, "Histogram file" \
@@ -752,7 +763,7 @@ def ReadHistogram(filename):
     return counts
 
 
-def FillHistogram(opfilename, bin_planes, bin_centers, ndim):
+def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
 
     opfile = open(opfilename, 'r')
     n_planes = len(bin_planes)
@@ -763,11 +774,20 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim):
     for a, b in pairwise(bin_planes):
         bin_pairs.append(tuple([a, b]))
     print("Making a histogram out of the bisected boundaries...")
+    #set up progress bar
+    if progress_bar:
+        bar = progressbar.ProgressBar(maxval=numlines,
+                                      widgets=[progressbar.Bar('=', '[', ']'), ' ',
+                                               progressbar.Percentage()])
+        bar.start()
     try:
         for linestring in opfile:
             line = line + 1
-            if line % 1000 == 0:
-                print('.', end="", flush=True)
+            if progress_bar:
+                bar.update(line)
+            else: 
+                if line % 1000 == 0:
+                    print('.', end="", flush=True)
             linelist = linestring.split()
             # Skip lines where inversion occurred, they should not be counted
             if len(linelist) != ndim + 1:
@@ -895,13 +915,17 @@ def ReadFPTs(dir, lower_box, upper_box, nboxes):
     return LowerFPTs, UpperFPTs
 
 
-def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
-                                 ndim, nsweeps):
-
-    #first get the number of lines in the file
+def GetNumLinesInFile(opfilename):
     print("Counting number of lines in file...")
     num_lines = sum(1 for line in open(opfilename, 'r'))
     print("There are ", num_lines, "in file ", opfilename)
+    return num_lines
+
+def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
+                                 ndim, nsweeps, numlines):
+
+    #first get the number of lines in the file
+
     opfile = open(opfilename, 'r')
     line = 0
     StepsInsideBox = 1
@@ -923,16 +947,18 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
     LowerFPTs = [[] for x in range(nboxes)]
     hits = 0
     #set up progress bar
-    bar = progressbar.ProgressBar(maxval=num_lines,
-                                  widgets=[progressbar.Bar('=', '[', ']'), ' ',
-                                           progressbar.Percentage()])
-    bar.start()
+    if progress_bar:
+        bar = progressbar.ProgressBar(maxval=numlines,
+                                      widgets=[progressbar.Bar('=', '[', ']'), ' ',
+                                               progressbar.Percentage()])
+        bar.start()
     try:
         for linestring in opfile:
             line = line + 1
 
             #update progress bar
-            bar.update(line)
+            if progress_bar:
+                bar.update(line)
             linelist = linestring.split()
             """
             assert len(linelist) >= ndim + 1, 'Length of line ' + \
@@ -961,7 +987,6 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                     break
 
             if current_box_id != new_box_id:
-                print("Changed to box ", new_box_id, " at step ", time)
                 if current_box_id >= 0:
                     FoundFirstLowerHit[current_box_id] = False
                     FoundFirstUpperHit[current_box_id] = False
