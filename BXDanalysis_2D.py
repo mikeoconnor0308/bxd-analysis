@@ -850,16 +850,6 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
     finally:
         opfile.close()
 
-    # write out the raw histogram
-    rawHistogram = open(output_dir + '/rawHistogram.txt', 'w')
-    cv_dist = ComputeDistancesAlongCV(bin_centers)
-    try:
-        for x, c in zip(cv_dist, counts):
-            string = '%s\t%s\n' % (x, c)
-            rawHistogram.write(string)
-    finally:
-        rawHistogram.close()
-    print("Raw histogram printed out to rawHistogram.txt")
     return counts
 
 
