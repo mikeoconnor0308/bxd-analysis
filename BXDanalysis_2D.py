@@ -206,12 +206,12 @@ def ComputeHistError(count, count_in_box, box_id, box_free_energies,
     return math.sqrt(error_var)
 
 
-def BXDanalysis(Filename, BoundsFilename, Ndim,
+def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
                 MFPTthreshold=0.0, BoxLowerID=0,
                 BoxUpperID=None, Nsweeps=None, plot=True,
                 MaxDistance=float("inf"),
                 ThresholdFile=None, ReverseBounds=False, read_fpts=False,
-                fpt_dir=None, hist_file=None):
+                FPTDirectories=None, HistFiles=None):
 
     # First read all the bounds
     print("Reading bounds from json file:", BoundsFilename)
@@ -257,16 +257,10 @@ def BXDanalysis(Filename, BoundsFilename, Ndim,
     kUpperList = []
     kLowerList = []
 
-    numlines = GetNumLinesInFile(Filename)
-
-    print("Getting passage times for all boxes from trajectory")
-    if read_fpts is False:
-        fpt_lower_list, fpt_upper_list = GetFirstPassageTimesAllBoxes(
-            Filename, BoundaryList, BoxLowerID, BoxUpperID, Ndim, Nsweeps,
-            numlines)
-    else:
-        fpt_lower_list, fpt_upper_list = ReadFPTs(fpt_dir, BoxLowerID,
-                                                  BoxUpperID, nBounds -1 )
+    fpt_lower_list, fpt_upper_list = GetFPTs(FPTDirectories, TrajectoryFiles,
+                                             BoundaryList, BoxLowerID,
+                                             BoxUpperID, Ndim, Nsweeps,
+                                             nBounds - 1)
 
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
@@ -275,11 +269,7 @@ def BXDanalysis(Filename, BoundsFilename, Ndim,
     if ThresholdFile:
         thresholds_lower, thresholds_upper = ReadThresholds(
             threshold_file, thresholds_lower, thresholds_upper)
-    for i in range(BoxLowerID, BoxUpperID + 1):
-        print("First passage times less than ", thresholds_lower[
-              i], "for box ", i, " to box ", i - 1, "will be neglected")
-        print("First passage times less than ", thresholds_upper[
-              i], "for box ", i, " to box ", i + 1, "will be neglected")
+
     print("Computing MFPTs")
     kLowerList, kUpperList = ComputeMFPTs(fpt_lower_list, fpt_upper_list,
                                           BoundaryList, BoxLowerID, BoxUpperID,
@@ -294,14 +284,9 @@ def BXDanalysis(Filename, BoundsFilename, Ndim,
     boxError = e
 
     # populate histogram
+    hist_counts = GetHistogram(HistFiles, TrajectoryFiles, hist_planes,
+                               hist_centers, Ndim)
 
-    if read_fpts is False:
-        hist_counts = FillHistogram(Filename, hist_planes, hist_centers, Ndim,
-                                    numlines)
-    else:
-        hist_counts = ReadHistogram(hist_file)
-        assert len(hist_counts) == len(hist_planes) - 1, "Histogram file" \
-                                                         "read error."
     # count the events in each box
     idx = 0
     nBoxes = BoxUpperID + 1 - BoxLowerID
@@ -426,6 +411,11 @@ def ReadThresholds(threshold_file, thresholds_lower, thresholds_upper):
             thresholds_upper[box] = upper
     finally:
         f.close()
+    for i in range(len(thresholds_lower)):
+        print("First passage times less than ", thresholds_lower[
+              i], "for box ", i, " to box ", i - 1, "will be neglected")
+        print("First passage times less than ", thresholds_upper[
+              i], "for box ", i, " to box ", i + 1, "will be neglected")
     return thresholds_lower, thresholds_upper
 
 
@@ -747,6 +737,60 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
     return FPT_list, found_hit, last_hit_time, numhits
 
 
+def GetHistogram(histogram_files, trajectory_files, bin_planes, bin_centers,
+                 ndim):
+
+    """
+    Given directories to existing histogram files from previous run
+    and path to trajectory file, will populate a histogram.
+    WARNING: Assumes that the histogram bins are the same between runs!
+    """
+
+    nbins = len(bin_planes) - 1
+    counts = [0.0] * (nbins)
+    if trajectory_files is not None:
+        for trajectory in trajectory_files:
+            print("Filling histogram from trajectory file",
+                  trajectory)
+            numlines = GetNumLinesInFile(trajectory)
+            new_counts = FillHistogram(trajectory, bin_planes,
+                                       bin_centers, ndim, numlines)
+            print("debug: len new counts: ",len(new_counts))
+            print("debug: len counts: ", len(counts))
+            if len(new_counts) != len(counts):
+                print("Error! The number of bins from this file does not",
+                      "match the rest of the input. Skipping this file.")
+            else:
+                for i in range(len(counts)):
+                    counts[i] += new_counts[i]
+    if histogram_files is not None:
+        for hist_file in histogram_files:
+            print("Filling histogram from precomputed ",
+                  "histogram file ", hist_file)
+            new_counts = ReadHistogram(hist_file)
+            print("debug: len new counts: ",len(new_counts))
+            print("debug: len counts: ", len(counts))
+            if len(new_counts) != len(counts):
+                print("Error! The number of bins from this file does not",
+                      "match the rest of the input. Skipping this file.")
+            else:
+                for i in range(len(counts)):
+                    counts[i] += new_counts[i]
+
+    # write out the raw histogram
+    rawHistogram = open(output_dir + '/rawHistogram.txt', 'w')
+    cv_dist = ComputeDistancesAlongCV(bin_centers)
+    try:
+        for x, c in zip(cv_dist, counts):
+            string = '%s\t%s\n' % (x, c)
+            rawHistogram.write(string)
+    finally:
+        rawHistogram.close()
+    print("Raw histogram printed out to rawHistogram.txt")
+
+    return counts
+
+
 def ReadHistogram(filename):
     """
     Reads a precomputed histogram from file,
@@ -785,7 +829,7 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
             line = line + 1
             if progress_bar:
                 bar.update(line)
-            else: 
+            else:
                 if line % 1000 == 0:
                     print('.', end="", flush=True)
             linelist = linestring.split()
@@ -892,13 +936,13 @@ def plotDecay(decay_array, outputfile, label, color_id):
            color=tableau20[color_id])
 
 
-def ReadFPTs(dir, lower_box, upper_box, nboxes):
+def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
     """
     Read FPTs that have been precomputed by GetFirstPassageTimesAllBoxes
     """
     LowerFPTs = [[] for x in range(nboxes)]
     UpperFPTs = [[] for x in range(nboxes)]
-    print("Reading previously generated FPTs from directory: ", dir)
+    print("Reading previously generated FPTs from directory: ", fpt_dir)
     for boxIdx in range(lower_box, upper_box + 1):
         lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
         lowerFile = open(lower_fpt_name)
@@ -918,8 +962,60 @@ def ReadFPTs(dir, lower_box, upper_box, nboxes):
 def GetNumLinesInFile(opfilename):
     print("Counting number of lines in file...")
     num_lines = sum(1 for line in open(opfilename, 'r'))
-    print("There are ", num_lines, "in file ", opfilename)
+    print("There are ", num_lines, " lines in the file ", opfilename)
     return num_lines
+
+
+def GetFPTs(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID, BoxUpperID, Ndim, Nsweeps,
+            nBoxes):
+
+    """
+    Given directories to existing fpts directories and path to trajectory file,
+    will gather the FPTs from all sources
+    """
+
+    fpt_lower_list = [[] for x in range(nBoxes)]
+    fpt_upper_list = [[] for x in range(nBoxes)]
+    if trajectory_files is not None:
+        for trajectory in trajectory_files:
+            print("Getting passage times for all boxes from trajectory file ",
+                  trajectory)
+            numlines = GetNumLinesInFile(trajectory)
+            lower_list, upper_list = GetFirstPassageTimesAllBoxes(
+                trajectory, BoundaryList, BoxLowerID,
+                BoxUpperID, Ndim, Nsweeps, numlines)
+            for i in range(nBoxes):
+                fpt_lower_list[i] += lower_list[i]
+                fpt_upper_list[i] += upper_list[i]
+    if fpt_dirs is not None:
+        for fpt_dir in fpt_dirs:
+            print("Getting passage times for all boxes from precomputed ",
+                  "FPT directory ", fpt_dir)
+            lower_list, upper_list = ReadFPTs(fpt_dir, BoxLowerID,
+                                              BoxUpperID, nBoxes)
+            for i in range(nBoxes):
+                fpt_lower_list[i] += lower_list[i]
+                fpt_upper_list[i] += upper_list[i]
+
+    # output FPTs to save repeat analysis time
+    for boxIdx in range(BoxLowerID, BoxUpperID + 1):
+        fpt_dir = output_dir + "/FPT_arrays"
+        make_sure_path_exists(fpt_dir)
+
+        lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
+        lowerFile = open(lower_fpt_name, 'w')
+        for fpt in fpt_lower_list[boxIdx]:
+            print(str(fpt), file=lowerFile)
+        lowerFile.close()
+
+        upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
+        upperFile = open(upper_fpt_name, 'w')
+        for fpt in fpt_upper_list[boxIdx]:
+            print(str(fpt), file=upperFile)
+        upperFile.close()
+
+    return fpt_lower_list, fpt_upper_list
+
 
 def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                                  ndim, nsweeps, numlines):
@@ -1054,25 +1150,6 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
 
     finally:
         opfile.close()
-    print('.')
-
-    # output FPTs to save repeat analysis time
-
-    for boxIdx in range(LowerBoxID, UpperBoxID + 1):
-        fpt_dir = output_dir + "/FPT_arrays"
-        make_sure_path_exists(fpt_dir)
-
-        lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
-        lowerFile = open(lower_fpt_name, 'w')
-        for fpt in LowerFPTs[boxIdx]:
-            print(str(fpt), file=lowerFile)
-        lowerFile.close()
-
-        upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
-        upperFile = open(upper_fpt_name, 'w')
-        for fpt in UpperFPTs[boxIdx]:
-            print(str(fpt), file=upperFile)
-        upperFile.close()
     return LowerFPTs, UpperFPTs
 
 
@@ -1123,7 +1200,6 @@ def reject_outliers(Upper, Lower, bin, threshold_lower=0.0,
     Lower = np.array(Lower)
     if len(Upper) == 0 or len(Lower) == 0:
         return Upper, Lower
-
     Upper = Upper[Upper > threshold_upper]
 
     Lower = Lower[Lower > threshold_lower]
@@ -1326,10 +1402,10 @@ if __name__ == "__main__":
     argparser.add_argument("bounds", help="File containing the BXD bounds")
     argparser.add_argument(
         "ndim", help="Number of dimensions of BXD boundaries", type=int)
-    argparser.add_argument("--trajectory", help="Path of BXD output file")
-    argparser.add_argument("--fpt_dir", help=("Directory of FPTs",
+    argparser.add_argument("--trajectories", nargs='+', help="Path of BXD output file(s)")
+    argparser.add_argument("--fpt_dirs", nargs='+', help=("Directory/Directories of FPTs",
                            " outputted by this script"))
-    argparser.add_argument("--hist_file", help=("Path to raw histogram file",
+    argparser.add_argument("--hist_files", nargs='+', help=("Directory/Directories to raw histogram file",
                            " outputted by this script"))
     argparser.add_argument(
         "--MFPTthreshold",
@@ -1370,24 +1446,20 @@ if __name__ == "__main__":
     max_width = float("inf")
     threshold_file = None
     reverse_boxes = False
-    traj_file = None
-    fpt_dir = None
-    hist_file = None
+    traj_files = None
+    fpt_dirs = None
+    hist_files = None
     read_fpt = False
-    if args.trajectory:
-        traj_file = args.trajectory
-    if not args.trajectory:
-        if args.fpt_dir and args.hist_file:
-            fpt_dir = args.fpt_dir
-            hist_file = args.hist_file
-            read_fpt = True
-        else:
-            print("Error: Trajectory file not specified (--trajectory).",
-                  "Are you trying to rerun analysis? Check input.")
-            sys.exit()
-    if args.trajectory and (args.fpt_dir or args.hist_file):
-        print("Error: Trajectory flag specified (--trajectory) as well as",
-              " either FPT directory or hist_file. Please check input.")
+    if args.trajectories:
+        traj_files = args.trajectories
+    if args.fpt_dirs and args.hist_files:
+        fpt_dirs = args.fpt_dirs
+        hist_files = args.hist_files
+        read_fpt = True
+    if not args.trajectories and not (args.fpt_dirs and args.hist_files):
+        print("Error: Trajectory file was not specificed (--trajectories). ",
+              "If rerunning analysis, need both FPT directory and histogram",
+              "file flag specfied (--fpt_dirs and --hist_files)")
         sys.exit()
     if args.LowerBoxID:
         lower_box_id = args.LowerBoxID
@@ -1406,10 +1478,9 @@ if __name__ == "__main__":
     if args.output_dir:
         output_dir = args.output_dir
 
-    BXDanalysis(traj_file, bounds_file, ndim,
+    BXDanalysis(traj_files, bounds_file, ndim,
                 MFPTthreshold=mfpt, BoxLowerID=lower_box_id,
                 BoxUpperID=upper_box_id, Nsweeps=nsweeps,
                 MaxDistance=max_width,
                 ThresholdFile=threshold_file, ReverseBounds=reverse_boxes,
-                read_fpts=read_fpt,
-                fpt_dir=fpt_dir, hist_file=hist_file)
+                FPTDirectories=fpt_dirs, HistFiles=hist_files)
