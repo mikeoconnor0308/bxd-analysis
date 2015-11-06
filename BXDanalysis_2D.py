@@ -815,6 +815,9 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
     counts = [0.0] * (nbins)
     line = 0
     bin_pairs = []
+    current_bin = None
+    bin_num = 0
+    old_method_bin = None
     for a, b in pairwise(bin_planes):
         bin_pairs.append(tuple([a, b]))
     print("Making a histogram out of the bisected boundaries...")
@@ -840,13 +843,34 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
                 cv = [float(x) for x in linelist[1:ndim + 1]]
             except ValueError:
                 break
-            i = 0
-            for pair in bin_pairs:
-                if IsInsideBox(cv, pair[0], pair[1], ndim):
-                    counts[i] += 1
-                i += 1
-    except:
-        print("Error reading file")
+
+            find_bin = False
+            in_box = False
+            #If current bin has been set, then check if in it
+            if current_bin is not None:
+                in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
+            #if in current box, add it to counts
+            if in_box: 
+                counts[bin_num] += 1
+            #if not in box, then need to find the bin
+            if not in_box: 
+                find_bin = True
+            if find_bin:
+                found_bin = False
+                i = 0 
+                for pair in bin_pairs:
+                    if not found_bin: 
+                        if IsInsideBox(cv, pair[0], pair[1], ndim):
+                            bin_num = i
+                            counts[bin_num] += 1
+                            found_bin = True
+                            current_bin = pair
+                            break
+                        else:
+                            i = i + 1
+                    else:
+                        break
+
     finally:
         opfile.close()
 
