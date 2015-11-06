@@ -1062,15 +1062,29 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
             new_box_id = -1
             debug = False
 
-            for i in range(LowerBoxID, UpperBoxID + 1):
-                in_box = IsInsideBox(
-                    distance, bounds[i], bounds[i + 1], ndim, debug)
-                if in_box is None:
-                    new_box_id = current_box_id
-                    break
-                elif in_box:
-                    new_box_id = i
-                    break
+            find_box = False
+            if current_box_id == -1:
+                find_box = True
+            elif IsInsideBox(distance, bounds[current_box_id], bounds[current_box_id + 1], ndim, debug):
+                new_box_id = current_box_id
+            else:
+                find_box = True
+            if find_box:
+                #first try boxes adjacent to current one, then the rest of the list
+                box_list = []
+                if current_box_id != -1:
+                    box_list += [max(current_box_id - 1, LowerBoxID),
+                                 min(current_box_id + 1, UpperBoxID + 1)]
+                box_list += range(LowerBoxID, UpperBoxID+1)
+                for i in box_list:
+                    in_box = IsInsideBox(
+                        distance, bounds[i], bounds[i + 1], ndim, debug)
+                    if in_box is None:
+                        new_box_id = current_box_id
+                        break
+                    elif in_box:
+                        new_box_id = i
+                        break
 
             if current_box_id != new_box_id:
                 if current_box_id >= 0:
