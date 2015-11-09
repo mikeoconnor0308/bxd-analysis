@@ -642,10 +642,12 @@ def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
     Returns:
         bool : True if inside box, False otherwise
     """
-
+    """
     rho = np.asarray(rho)
     lowerbound = np.asarray(lowerbound)
     upperbound = np.asarray(upperbound)
+    """
+    """
     assert isinstance(
         ndim, int), "Number of dimensions is not an integer: %r" % ndim
     assert len(
@@ -657,6 +659,7 @@ def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
     trace = False
     if trace:
         set_trace()
+    """
     # Compute the signed distance from the plane to rho from each bound
     dist_lower = np.dot(rho, lowerbound[:ndim]) + lowerbound[ndim]
     dist_upper = np.dot(rho, upperbound[:ndim]) + upperbound[ndim]
@@ -840,9 +843,11 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
             if len(linelist) != ndim + 1:
                 continue
             try:
-                cv = [float(x) for x in linelist[1:ndim + 1]]
+                cv = np.array([float(x) for x in linelist[1:ndim + 1]])
             except ValueError:
-                break
+                print("ValueError thrown reading CV on line ", line, ":",
+                      linestring)
+                sys.exit()
 
             find_bin = False
             in_box = False
@@ -850,16 +855,16 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
             if current_bin is not None:
                 in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
             #if in current box, add it to counts
-            if in_box: 
+            if in_box:
                 counts[bin_num] += 1
             #if not in box, then need to find the bin
-            if not in_box: 
+            if not in_box:
                 find_bin = True
             if find_bin:
                 found_bin = False
-                i = 0 
+                i = 0
                 for pair in bin_pairs:
-                    if not found_bin: 
+                    if not found_bin:
                         if IsInsideBox(cv, pair[0], pair[1], ndim):
                             bin_num = i
                             counts[bin_num] += 1
@@ -1079,7 +1084,7 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                 continue
             try:
                 time = float(linelist[0])
-                distance = [float(x) for x in linelist[1:ndim + 1]]
+                distance = np.array([float(x) for x in linelist[1:ndim + 1]])
             except ValueError:
                 print("Error reading line, skipping ", line)
                 break
@@ -1098,8 +1103,8 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                 box_list = []
                 if current_box_id != -1:
                     box_list += [max(current_box_id - 1, LowerBoxID),
-                                 min(current_box_id + 1, UpperBoxID + 1)]
-                box_list += range(LowerBoxID, UpperBoxID+1)
+                                 min(current_box_id + 1, UpperBoxID - 1)]
+                box_list += range(LowerBoxID, UpperBoxID - 1)
                 for i in box_list:
                     in_box = IsInsideBox(
                         distance, bounds[i], bounds[i + 1], ndim, debug)
@@ -1111,6 +1116,7 @@ def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
                         break
 
             if current_box_id != new_box_id:
+                print("current_box_id ", current_box_id, " new box_id ", new_box_id)
                 if current_box_id >= 0:
                     FoundFirstLowerHit[current_box_id] = False
                     FoundFirstUpperHit[current_box_id] = False
