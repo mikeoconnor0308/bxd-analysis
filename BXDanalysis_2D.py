@@ -1,5 +1,9 @@
 #!/usr/bin/python
 import sys
+if sys.version_info < (3,):
+    from __future__ import print_function
+    print("Warning: This script is written to support Python 3.x.",
+          "Old")
 import math
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,7 +13,6 @@ import json
 from itertools import tee
 import os
 import errno
-from pudb import set_trace
 try:
     import progressbar
     progress_bar = True
@@ -125,10 +128,6 @@ def BisectPlane(plane_1, plane_2, fraction):
             D = -D
             plane = np.append(new_norm, D)
         except np.linalg.linalg.LinAlgError:
-            print(
-                "WARNING: Linalg error trying to find intersection between",
-                "planes ", plane_1, plane_2,
-                "will simply place plane between them")
             D = plane_1[-1] + (plane_2[-1] - plane_1[-1]) * fraction
             plane = np.append(norm_1, D)
 
@@ -257,11 +256,6 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     kUpperList = []
     kLowerList = []
 
-    fpt_lower_list, fpt_upper_list = GetFPTs(FPTDirectories, TrajectoryFiles,
-                                             BoundaryList, BoxLowerID,
-                                             BoxUpperID, Ndim, Nsweeps,
-                                             nBounds - 1)
-
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
     thresholds_lower = [0.0] * (nBounds - 1)
@@ -269,6 +263,12 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     if ThresholdFile:
         thresholds_lower, thresholds_upper = ReadThresholds(
             threshold_file, thresholds_lower, thresholds_upper)
+
+    fpt_lower_list, fpt_upper_list, hist_counts = GetFPTsAndHist(FPTDirectories, TrajectoryFiles,
+                                 BoundaryList, BoxLowerID,
+                                 BoxUpperID,
+                                 HistFiles, hist_planes, hist_centers, thresholds_lower,
+                                 Ndim, Nsweeps, nBounds - 1)
 
     print("Computing MFPTs")
     kLowerList, kUpperList = ComputeMFPTs(fpt_lower_list, fpt_upper_list,
@@ -283,10 +283,6 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     boxProbability = p
     boxError = e
 
-    # populate histogram
-    hist_counts = GetHistogram(HistFiles, TrajectoryFiles, hist_planes,
-                               hist_centers, Ndim)
-
     # count the events in each box
     idx = 0
     nBoxes = BoxUpperID + 1 - BoxLowerID
@@ -295,7 +291,6 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         bid = i + BoxLowerID
         TotalCountsInBox[i] += hist_counts[idx]
         while not np.array_equal(hist_planes[idx + 1], BoundaryList[bid + 1]):
-            print(hist_planes[idx + 1], BoundaryList[bid + 1])
             idx = idx + 1
             TotalCountsInBox[i] += hist_counts[idx]
         idx = idx + 1
@@ -351,7 +346,6 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
            "/normalizedHistSum.png",
            "Distance along CV / Angstrom",
            "$P(\\rho)$", ls='-')
-    print("Histogram errors: ", hist_errors)
 
     print("\nThe raw histogram with each box normalized to 1 is in ",
           rawBoxNormalizedHistogram.name)
@@ -592,41 +586,6 @@ def read_bounds_json(json_file, reverse_bounds=False):
     return planes, plane_points
 
 
-def read_centers(centers_file, ndim):
-    """
-    Reads the centers of the trajectory within each box from a file
-    The order of the centers is assumed to match the order of the BXD
-    boundaries defined in the boundary file, and are expected to have the
-    same dimensionality as the plane
-
-    Args:
-        centers_file (str) : path and filename
-        ndim (int) : Number of dimensions of CVs
-
-    Returns:
-        list : list of centers
-    """
-
-    assert isinstance(
-        centers_file, str), "centers_file is not a string: %r " % centers_file
-    assert isinstance(
-        ndim, int), "Number of dimensions is not an integer: %r" % ndim
-
-    f = open(centers_file, 'r')
-    line_no = 1
-    centers = []
-    try:
-        for line in f:
-            fields = line.split()
-            assert len(fields) == ndim, 'Length of line ' + str(line_no) + \
-                ' is not equal to number of dimensions (' + str(
-                    ndim) + ')'
-            centers.append(np.array([float(x) for x in fields]))
-    finally:
-        f.close()
-    return centers
-
-
 def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
     """
 
@@ -642,24 +601,7 @@ def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
     Returns:
         bool : True if inside box, False otherwise
     """
-    """
-    rho = np.asarray(rho)
-    lowerbound = np.asarray(lowerbound)
-    upperbound = np.asarray(upperbound)
-    """
-    """
-    assert isinstance(
-        ndim, int), "Number of dimensions is not an integer: %r" % ndim
-    assert len(
-        rho) == ndim, "Number of dimensions of CV does not equal ndim: %r" % len(rho)
-    assert len(lowerbound) == ndim + \
-        1, "Hyperplane dimension does not equal ndim + 1: %r" % len(lowerbound)
-    assert len(upperbound) == ndim + \
-        1, "Hyperplane dimension does not equal ndim + 1: %r" % len(upperbound)
-    trace = False
-    if trace:
-        set_trace()
-    """
+
     # Compute the signed distance from the plane to rho from each bound
     dist_lower = np.dot(rho, lowerbound[:ndim]) + lowerbound[ndim]
     dist_upper = np.dot(rho, upperbound[:ndim]) + upperbound[ndim]
@@ -740,32 +682,41 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
     return FPT_list, found_hit, last_hit_time, numhits
 
 
-def GetHistogram(histogram_files, trajectory_files, bin_planes, bin_centers,
-                 ndim):
-
+def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
+                   BoxUpperID,
+                   histogram_files, bin_planes, bin_centers, thresholds,
+                   Ndim, Nsweeps, nBoxes):
     """
-    Given directories to existing histogram files from previous run
-    and path to trajectory file, will populate a histogram.
-    WARNING: Assumes that the histogram bins are the same between runs!
+    Given directories to existing FPTs from previous and/or path to trajectory
+    file, will read the FPTs and populate a histogram
+    WARNING: Assumes the histogram bins are the same between analysis runs
     """
 
+    #set up empty returns
     nbins = len(bin_planes) - 1
+    fpt_lower_list = [[] for x in range(nBoxes)]
+    fpt_upper_list = [[] for x in range(nBoxes)]
     counts = [0.0] * (nbins)
+
+    #loop over any trajectory files and get the FPTs and fill histogram
     if trajectory_files is not None:
         for trajectory in trajectory_files:
-            print("Filling histogram from trajectory file",
+            print("Filling histogram and computing FPTs from trajectory file",
                   trajectory)
             numlines = GetNumLinesInFile(trajectory)
-            new_counts = FillHistogram(trajectory, bin_planes,
-                                       bin_centers, ndim, numlines)
-            print("debug: len new counts: ",len(new_counts))
-            print("debug: len counts: ", len(counts))
+            lower, upper, new_counts = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID, BoxUpperID,
+                                                              thresholds,
+                                                              bin_planes, bin_centers, Ndim, Nsweeps, numlines)
+            for i in range(nBoxes):
+                fpt_lower_list[i] += lower[i]
+                fpt_upper_list[i] += upper[i]
             if len(new_counts) != len(counts):
                 print("Error! The number of bins from this file does not",
                       "match the rest of the input. Skipping this file.")
             else:
                 for i in range(len(counts)):
                     counts[i] += new_counts[i]
+    #loop over any precomputed histogram files (RawHistogram.txt)
     if histogram_files is not None:
         for hist_file in histogram_files:
             print("Filling histogram from precomputed ",
@@ -779,6 +730,34 @@ def GetHistogram(histogram_files, trajectory_files, bin_planes, bin_centers,
             else:
                 for i in range(len(counts)):
                     counts[i] += new_counts[i]
+    #Loop over any precomputed FPTs (FPT_arrays)
+    if fpt_dirs is not None:
+        for fpt_dir in fpt_dirs:
+            print("Getting passage times for all boxes from precomputed ",
+                  "FPT directory ", fpt_dir)
+            lower_list, upper_list = ReadFPTs(fpt_dir, BoxLowerID,
+                                              BoxUpperID, nBoxes)
+            for i in range(nBoxes):
+                fpt_lower_list[i] += lower_list[i]
+                fpt_upper_list[i] += upper_list[i]
+
+    # output FPTs to save repeat analysis time
+    for boxIdx in range(BoxLowerID, BoxUpperID + 1):
+        fpt_dir = output_dir + "/FPT_arrays"
+        make_sure_path_exists(fpt_dir)
+
+        lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
+        lowerFile = open(lower_fpt_name, 'w')
+        for fpt in fpt_lower_list[boxIdx]:
+            print(str(fpt), file=lowerFile)
+        lowerFile.close()
+
+        upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
+        upperFile = open(upper_fpt_name, 'w')
+        for fpt in fpt_upper_list[boxIdx]:
+            print(str(fpt), file=upperFile)
+        upperFile.close()
+    print("FPTs outputted to " + fpt_dir)
 
     # write out the raw histogram
     rawHistogram = open(output_dir + '/rawHistogram.txt', 'w')
@@ -791,7 +770,8 @@ def GetHistogram(histogram_files, trajectory_files, bin_planes, bin_centers,
         rawHistogram.close()
     print("Raw histogram printed out to rawHistogram.txt")
 
-    return counts
+    return fpt_lower_list, fpt_upper_list, counts
+
 
 
 def ReadHistogram(filename):
@@ -810,17 +790,43 @@ def ReadHistogram(filename):
     return counts
 
 
-def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
+def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
+                           tresholds,
+                           bin_planes, bin_centers, ndim, nsweeps, numlines):
+    """
+    Given opfilename, a BXD trajectory file, a list of BXD bounds and histogram
+    bins, will calculate FPTs for each box and fill histogram.
+    """
 
+    #Variables for FPTs
     opfile = open(opfilename, 'r')
+    line = 0
+    StepsInsideBox = 1
+    nboxes = len(bounds) - 1
+    LastUpperHitTime = [0.0] * nboxes
+    LastLowerHitTime = [0.0] * nboxes
+    FoundFirstUpperHit = [False] * nboxes
+    FoundFirstLowerHit = [False] * nboxes
+    InsideTheBox = False
+    current_box_id = -1
+    NumUpperHits = [0] * nboxes
+    NumLowerHits = [0] * nboxes
+
+    FoundFirstBox = False
+    sweep_count = -1
+
+#   initialize two lists
+    UpperFPTs = [[] for x in range(nboxes)]
+    LowerFPTs = [[] for x in range(nboxes)]
+    hits = 0
+
+    #Variables for histogram binning
     n_planes = len(bin_planes)
     nbins = n_planes - 1
     counts = [0.0] * (nbins)
-    line = 0
     bin_pairs = []
     current_bin = None
     bin_num = 0
-    old_method_bin = None
     for a, b in pairwise(bin_planes):
         bin_pairs.append(tuple([a, b]))
     print("Making a histogram out of the bisected boundaries...")
@@ -830,56 +836,158 @@ def FillHistogram(opfilename, bin_planes, bin_centers, ndim, numlines):
                                       widgets=[progressbar.Bar('=', '[', ']'), ' ',
                                                progressbar.Percentage()])
         bar.start()
+
     try:
         for linestring in opfile:
             line = line + 1
+
+            #update progress bar
             if progress_bar:
                 bar.update(line)
             else:
                 if line % 1000 == 0:
                     print('.', end="", flush=True)
             linelist = linestring.split()
-            # Skip lines where inversion occurred, they should not be counted
-            if len(linelist) != ndim + 1:
+
+            if len(linelist) < ndim + 1:
+                print("Odd line, skipping: ", line)
                 continue
+            #Read CV and time
             try:
+                time = float(linelist[0])
                 cv = np.array([float(x) for x in linelist[1:ndim + 1]])
             except ValueError:
-                print("ValueError thrown reading CV on line ", line, ":",
-                      linestring)
-                sys.exit()
+                print("Error reading line, skipping ", line)
+                continue
 
-            find_bin = False
-            in_box = False
-            #If current bin has been set, then check if in it
-            if current_bin is not None:
-                in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
-            #if in current box, add it to counts
-            if in_box:
-                counts[bin_num] += 1
-            #if not in box, then need to find the bin
-            if not in_box:
-                find_bin = True
-            if find_bin:
-                found_bin = False
-                i = 0
-                for pair in bin_pairs:
-                    if not found_bin:
-                        if IsInsideBox(cv, pair[0], pair[1], ndim):
-                            bin_num = i
-                            counts[bin_num] += 1
-                            found_bin = True
-                            current_bin = pair
-                            break
+            #perform histogram filling on lines that are not inversions.
+            if len(linelist) == ndim + 1:
+                find_bin = False
+                in_box = False
+                #If current bin has been set, then check if in it
+                if current_bin is not None:
+                    in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
+                #if in current box, add it to counts
+                if in_box:
+                    counts[bin_num] += 1
+                #if not in box, then need to find the bin
+                if not in_box:
+                    find_bin = True
+                if find_bin:
+                    found_bin = False
+                    i = 0
+                    for pair in bin_pairs:
+                        if not found_bin:
+                            if IsInsideBox(cv, pair[0], pair[1], ndim):
+                                bin_num = i
+                                counts[bin_num] += 1
+                                found_bin = True
+                                current_bin = pair
+                                break
+                            else:
+                                i = i + 1
                         else:
-                            i = i + 1
-                    else:
-                        break
+                            break
+
+            #perform FPT calculations on lines that are inversions
+            else:
+                new_box_id = -1
+                debug = False
+                find_box = False
+                if current_box_id == -1:
+                    find_box = True
+                elif IsInsideBox(cv, bounds[current_box_id],
+                                 bounds[current_box_id + 1], ndim, debug):
+                    new_box_id = current_box_id
+                else:
+                    find_box = True
+                if find_box:
+                    #first try boxes adjacent to current one,
+                    #then the rest of the list
+                    box_list = []
+                    if current_box_id != -1:
+                        box_list += [max(current_box_id - 1, LowerBoxID),
+                                     min(current_box_id + 1, UpperBoxID - 1)]
+                    box_list += range(LowerBoxID, UpperBoxID - 1)
+                    for i in box_list:
+                        in_box = IsInsideBox(
+                            cv, bounds[i], bounds[i + 1], ndim, debug)
+                        if in_box is None:
+                            new_box_id = current_box_id
+                            break
+                        elif in_box:
+                            new_box_id = i
+                            break
+
+                if current_box_id != new_box_id:
+                    if current_box_id >= 0:
+                        FoundFirstLowerHit[current_box_id] = False
+                        FoundFirstUpperHit[current_box_id] = False
+                    if new_box_id == LowerBoxID:
+                        sweep_count += 1
+                        if nsweeps is not None and sweep_count > nsweeps:
+                            print("Reached {0} sweep, stopping".format(nsweeps))
+                            break
+                    current_box_id = new_box_id
+                    hits = 0
+                if current_box_id >= 0:
+                    StepsInsideBox = StepsInsideBox + 1
+                    # Set up if first time enter box
+                    if(not InsideTheBox):
+                        InsideTheBox = True
+
+                    # If there is an inversion boundary
+                    if((len(linelist)) > ndim + 1):
+                        hits += 1
+                        # if hits < equilibration_hits:
+                        #    print("Discarding hit")
+                        #    continue
+
+                        # Make sure length of line is correct
+                        if len(linelist) != 2 + 2 * ndim:
+                            print("Odd line, skipping:", line)
+                            continue
+                        InversionBoundary = np.array(
+                            [float(x) for x in linelist[ndim + 1:]])
+                        # Update upper boundary FPT
+                        u, f, t, n = UpdateBoundaryFPT(
+                            UpperFPTs[current_box_id],
+                            InversionBoundary,
+                            bounds[current_box_id + 1],
+                            FoundFirstUpperHit[current_box_id],
+                            time,
+                            LastUpperHitTime[current_box_id],
+                            NumUpperHits[current_box_id],
+                            current_box_id,
+                            False,
+                            line
+                        )
+                        UpperFPTs[current_box_id] = u
+                        FoundFirstUpperHit[current_box_id] = f
+                        LastUpperHitTime[current_box_id] = t
+                        NumUpperHits[current_box_id] = n
+
+                        # Update lower boundary FPT
+                        u, f, t, n = UpdateBoundaryFPT(
+                            LowerFPTs[current_box_id],
+                            InversionBoundary,
+                            bounds[current_box_id],
+                            FoundFirstLowerHit[current_box_id],
+                            time,
+                            LastLowerHitTime[current_box_id],
+                            NumLowerHits[current_box_id],
+                            current_box_id,
+                            True,
+                            line
+                        )
+                        LowerFPTs[current_box_id] = u
+                        FoundFirstLowerHit[current_box_id] = f
+                        LastLowerHitTime[current_box_id] = t
+                        NumLowerHits[current_box_id] = n
 
     finally:
         opfile.close()
-
-    return counts
+    return LowerFPTs, UpperFPTs, counts
 
 
 def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None,
@@ -929,7 +1037,6 @@ def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None,
     kwargs['lw'] = 1.5
     kwargs['alpha'] = 1.0
     kwargs['marker'] = 'o'
-    print(kwargs)
     if error_bar:
         ax.errorbar(x, y, yerr=err, **error_kwargs)
     ax.plot(x, y, **kwargs)
@@ -955,6 +1062,13 @@ def plotDecay(decay_array, outputfile, label, color_id):
            color=tableau20[color_id])
 
 
+def GetNumLinesInFile(opfilename):
+    print("Counting number of lines in file...")
+    num_lines = sum(1 for line in open(opfilename, 'r'))
+    print("There are ", num_lines, " lines in the file ", opfilename)
+    return num_lines
+
+
 def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
     """
     Read FPTs that have been precomputed by GetFirstPassageTimesAllBoxes
@@ -976,216 +1090,6 @@ def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
         upperFile.close()
 
     return LowerFPTs, UpperFPTs
-
-
-def GetNumLinesInFile(opfilename):
-    print("Counting number of lines in file...")
-    num_lines = sum(1 for line in open(opfilename, 'r'))
-    print("There are ", num_lines, " lines in the file ", opfilename)
-    return num_lines
-
-
-def GetFPTs(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID, BoxUpperID, Ndim, Nsweeps,
-            nBoxes):
-
-    """
-    Given directories to existing fpts directories and path to trajectory file,
-    will gather the FPTs from all sources
-    """
-
-    fpt_lower_list = [[] for x in range(nBoxes)]
-    fpt_upper_list = [[] for x in range(nBoxes)]
-    if trajectory_files is not None:
-        for trajectory in trajectory_files:
-            print("Getting passage times for all boxes from trajectory file ",
-                  trajectory)
-            numlines = GetNumLinesInFile(trajectory)
-            lower_list, upper_list = GetFirstPassageTimesAllBoxes(
-                trajectory, BoundaryList, BoxLowerID,
-                BoxUpperID, Ndim, Nsweeps, numlines)
-            for i in range(nBoxes):
-                fpt_lower_list[i] += lower_list[i]
-                fpt_upper_list[i] += upper_list[i]
-    if fpt_dirs is not None:
-        for fpt_dir in fpt_dirs:
-            print("Getting passage times for all boxes from precomputed ",
-                  "FPT directory ", fpt_dir)
-            lower_list, upper_list = ReadFPTs(fpt_dir, BoxLowerID,
-                                              BoxUpperID, nBoxes)
-            for i in range(nBoxes):
-                fpt_lower_list[i] += lower_list[i]
-                fpt_upper_list[i] += upper_list[i]
-
-    # output FPTs to save repeat analysis time
-    for boxIdx in range(BoxLowerID, BoxUpperID + 1):
-        fpt_dir = output_dir + "/FPT_arrays"
-        make_sure_path_exists(fpt_dir)
-
-        lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
-        lowerFile = open(lower_fpt_name, 'w')
-        for fpt in fpt_lower_list[boxIdx]:
-            print(str(fpt), file=lowerFile)
-        lowerFile.close()
-
-        upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
-        upperFile = open(upper_fpt_name, 'w')
-        for fpt in fpt_upper_list[boxIdx]:
-            print(str(fpt), file=upperFile)
-        upperFile.close()
-
-    return fpt_lower_list, fpt_upper_list
-
-
-def GetFirstPassageTimesAllBoxes(opfilename, bounds, LowerBoxID, UpperBoxID,
-                                 ndim, nsweeps, numlines):
-
-    #first get the number of lines in the file
-
-    opfile = open(opfilename, 'r')
-    line = 0
-    StepsInsideBox = 1
-    nboxes = len(bounds) - 1
-    LastUpperHitTime = [0.0] * nboxes
-    LastLowerHitTime = [0.0] * nboxes
-    FoundFirstUpperHit = [False] * nboxes
-    FoundFirstLowerHit = [False] * nboxes
-    InsideTheBox = False
-    current_box_id = -1
-    NumUpperHits = [0] * nboxes
-    NumLowerHits = [0] * nboxes
-
-    FoundFirstBox = False
-    sweep_count = -1
-
-#   initialize two lists
-    UpperFPTs = [[] for x in range(nboxes)]
-    LowerFPTs = [[] for x in range(nboxes)]
-    hits = 0
-    #set up progress bar
-    if progress_bar:
-        bar = progressbar.ProgressBar(maxval=numlines,
-                                      widgets=[progressbar.Bar('=', '[', ']'), ' ',
-                                               progressbar.Percentage()])
-        bar.start()
-    try:
-        for linestring in opfile:
-            line = line + 1
-
-            #update progress bar
-            if progress_bar:
-                bar.update(line)
-            linelist = linestring.split()
-            """
-            assert len(linelist) >= ndim + 1, 'Length of line ' + \
-                str(line) + ' less than ndim +1 (' + str(ndim + 1) + ')'
-            """
-            if len(linelist) < ndim + 1:
-                print("Odd line, skipping: ", line)
-                continue
-            try:
-                time = float(linelist[0])
-                distance = np.array([float(x) for x in linelist[1:ndim + 1]])
-            except ValueError:
-                print("Error reading line, skipping ", line)
-                break
-            new_box_id = -1
-            debug = False
-
-            find_box = False
-            if current_box_id == -1:
-                find_box = True
-            elif IsInsideBox(distance, bounds[current_box_id], bounds[current_box_id + 1], ndim, debug):
-                new_box_id = current_box_id
-            else:
-                find_box = True
-            if find_box:
-                #first try boxes adjacent to current one, then the rest of the list
-                box_list = []
-                if current_box_id != -1:
-                    box_list += [max(current_box_id - 1, LowerBoxID),
-                                 min(current_box_id + 1, UpperBoxID - 1)]
-                box_list += range(LowerBoxID, UpperBoxID - 1)
-                for i in box_list:
-                    in_box = IsInsideBox(
-                        distance, bounds[i], bounds[i + 1], ndim, debug)
-                    if in_box is None:
-                        new_box_id = current_box_id
-                        break
-                    elif in_box:
-                        new_box_id = i
-                        break
-
-            if current_box_id != new_box_id:
-                print("current_box_id ", current_box_id, " new box_id ", new_box_id)
-                if current_box_id >= 0:
-                    FoundFirstLowerHit[current_box_id] = False
-                    FoundFirstUpperHit[current_box_id] = False
-                if new_box_id == LowerBoxID:
-                    sweep_count += 1
-                    if nsweeps is not None and sweep_count > nsweeps:
-                        print("Reached {0} sweep, stopping".format(nsweeps))
-                        break
-                current_box_id = new_box_id
-                hits = 0
-            if current_box_id >= 0:
-                StepsInsideBox = StepsInsideBox + 1
-                # Set up if first time enter box
-                if(not InsideTheBox):
-                    InsideTheBox = True
-
-                # If there is an inversion boundary
-                if((len(linelist)) > ndim + 1):
-                    hits += 1
-                    # if hits < equilibration_hits:
-                    #    print("Discarding hit")
-                    #    continue
-
-                    # Make sure length of line is correct
-                    if len(linelist) != 2 + 2 * ndim:
-                        print("Odd line, skipping:", line)
-                        continue
-                    InversionBoundary = np.array(
-                        [float(x) for x in linelist[ndim + 1:]])
-                    # Update upper boundary FPT
-                    u, f, t, n = UpdateBoundaryFPT(
-                        UpperFPTs[current_box_id],
-                        InversionBoundary,
-                        bounds[current_box_id + 1],
-                        FoundFirstUpperHit[current_box_id],
-                        time,
-                        LastUpperHitTime[current_box_id],
-                        NumUpperHits[current_box_id],
-                        current_box_id,
-                        False,
-                        line
-                    )
-                    UpperFPTs[current_box_id] = u
-                    FoundFirstUpperHit[current_box_id] = f
-                    LastUpperHitTime[current_box_id] = t
-                    NumUpperHits[current_box_id] = n
-
-                    # Update lower boundary FPT
-                    u, f, t, n = UpdateBoundaryFPT(
-                        LowerFPTs[current_box_id],
-                        InversionBoundary,
-                        bounds[current_box_id],
-                        FoundFirstLowerHit[current_box_id],
-                        time,
-                        LastLowerHitTime[current_box_id],
-                        NumLowerHits[current_box_id],
-                        current_box_id,
-                        True,
-                        line
-                    )
-                    LowerFPTs[current_box_id] = u
-                    FoundFirstLowerHit[current_box_id] = f
-                    LastLowerHitTime[current_box_id] = t
-                    NumLowerHits[current_box_id] = n
-
-    finally:
-        opfile.close()
-    return LowerFPTs, UpperFPTs
-
 
 def HistogramFPTs(Upper, Lower, bin):
     """
@@ -1268,10 +1172,7 @@ def ComputeBoxError(k_lower, k_upper, lower_FPTs, upper_FPTs):
     err_lower = np.std(lower_FPTs, ddof=1)/math.sqrt(float(len(lower_FPTs)))
     #err_upper = np.std(upper_FPTs, ddof=1)
     #err_lower = np.std(lower_FPTs, ddof=1)
-    print("Upper std error :", err_upper)
-    print("Lower std_err_lower:", err_lower)
     var_dg = math.pow(k_upper * err_upper, 2) + math.pow(k_lower * err_lower, 2)
-    print("dG variance:", var_dg)
     std_dg = math.sqrt(var_dg)
     return var_dg
 
