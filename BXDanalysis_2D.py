@@ -1,9 +1,5 @@
 #!/usr/bin/python
 import sys
-if sys.version_info < (3,):
-    from __future__ import print_function
-    print("Warning: This script is written to support Python 3.x.",
-          "Old")
 import math
 import numpy as np
 import matplotlib.pyplot as plt
@@ -237,7 +233,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     for i in range(0, nBounds - 1):
         print('\tBox ', i, ' spans ',
               BoundaryList[i], ' to ', BoundaryList[i + 1])
-
+    print("Performing analysis between boxes", BoxLowerID, BoxUpperID)
     # now create histogram bin planes
     assert plane_points is not None, 'Need points on each plane ' \
         'please make JSON file'
@@ -267,7 +263,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     fpt_lower_list, fpt_upper_list, hist_counts = GetFPTsAndHist(FPTDirectories, TrajectoryFiles,
                                  BoundaryList, BoxLowerID,
                                  BoxUpperID,
-                                 HistFiles, hist_planes, hist_centers, thresholds_lower,
+                                 HistFiles, hist_planes, hist_centers, MFPTthreshold,
                                  Ndim, Nsweeps, nBounds - 1)
 
     print("Computing MFPTs")
@@ -638,7 +634,7 @@ def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
 
 def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
                       hit_time, last_hit_time, numhits,
-                      current_box_id, lower, line):
+                      current_box_id, lower, line, threshold, last_bound_hit):
     """
     Given the boundary just hit and the bound to test, determines whether this
     boundary was hit and updates.
@@ -665,13 +661,20 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
 
     np.array(boundary_hit)
     np.array(boundary_test)
-
+    valid = True
     if np.allclose(boundary_hit, boundary_test):
+        last_bound_hit = boundary_hit
         if(found_hit):
             passageTime = hit_time - last_hit_time
             # Negative passage time will occur if files concatenated
             if(passageTime <= 0):
                 found_hit = False
+            # if hit against against different boundary to previous
+            # and less than threshold, get rid of it.
+            elif passageTime < threshold:
+                if not np.allclose(boundary_hit, last_bound_hit):
+                    valid = False
+                    print("Found short passage time at step", hit_time)
             else:
                 FPT_list.append(passageTime)
                 last_hit_time = hit_time
@@ -679,12 +682,12 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
         else:
             last_hit_time = hit_time
             found_hit = True
-    return FPT_list, found_hit, last_hit_time, numhits
+    return FPT_list, found_hit, last_hit_time, numhits, valid
 
 
 def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
                    BoxUpperID,
-                   histogram_files, bin_planes, bin_centers, thresholds,
+                   histogram_files, bin_planes, bin_centers, passage_threshold,
                    Ndim, Nsweeps, nBoxes):
     """
     Given directories to existing FPTs from previous and/or path to trajectory
@@ -705,7 +708,7 @@ def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
                   trajectory)
             numlines = GetNumLinesInFile(trajectory)
             lower, upper, new_counts = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID, BoxUpperID,
-                                                              thresholds,
+                                                              passage_threshold,
                                                               bin_planes, bin_centers, Ndim, Nsweeps, numlines)
             for i in range(nBoxes):
                 fpt_lower_list[i] += lower[i]
@@ -791,7 +794,7 @@ def ReadHistogram(filename):
 
 
 def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
-                           tresholds,
+                           passage_threshold,
                            bin_planes, bin_centers, ndim, nsweeps, numlines):
     """
     Given opfilename, a BXD trajectory file, a list of BXD bounds and histogram
@@ -811,6 +814,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     current_box_id = -1
     NumUpperHits = [0] * nboxes
     NumLowerHits = [0] * nboxes
+    last_bound_hit = None
 
     FoundFirstBox = False
     sweep_count = -1
@@ -827,6 +831,10 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     bin_pairs = []
     current_bin = None
     bin_num = 0
+    #temporary counts which are discarded if passage time less than threshold
+    tmp_counts = [0.0] * (nbins)
+    last_time = 0
+    max_steps = 1000  # max steps to allow before assuming fresh file
     for a, b in pairwise(bin_planes):
         bin_pairs.append(tuple([a, b]))
     print("Making a histogram out of the bisected boundaries...")
@@ -848,7 +856,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 if line % 1000 == 0:
                     print('.', end="", flush=True)
             linelist = linestring.split()
-
             if len(linelist) < ndim + 1:
                 print("Odd line, skipping: ", line)
                 continue
@@ -860,6 +867,12 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 print("Error reading line, skipping ", line)
                 continue
 
+            #if time is significantly greater than previous then treat
+            #as if separate file
+            if current_box_id is not None and time - last_time > max_steps:
+                FoundFirstUpperHit[current_box_id] = False
+                FoundFirstLowerHit[current_box_id] = False
+            last_time = time
             #perform histogram filling on lines that are not inversions.
             if len(linelist) == ndim + 1:
                 find_bin = False
@@ -869,7 +882,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
                 #if in current box, add it to counts
                 if in_box:
-                    counts[bin_num] += 1
+                    tmp_counts[bin_num] += 1
                 #if not in box, then need to find the bin
                 if not in_box:
                     find_bin = True
@@ -880,7 +893,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                         if not found_bin:
                             if IsInsideBox(cv, pair[0], pair[1], ndim):
                                 bin_num = i
-                                counts[bin_num] += 1
+                                tmp_counts[bin_num] += 1
                                 found_bin = True
                                 current_bin = pair
                                 break
@@ -907,8 +920,9 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     box_list = []
                     if current_box_id != -1:
                         box_list += [max(current_box_id - 1, LowerBoxID),
-                                     min(current_box_id + 1, UpperBoxID - 1)]
-                    box_list += range(LowerBoxID, UpperBoxID - 1)
+                                     min(current_box_id + 1, UpperBoxID)]
+                    box_list += range(LowerBoxID, UpperBoxID+1)
+                    print("Searching in ", box_list)
                     for i in box_list:
                         in_box = IsInsideBox(
                             cv, bounds[i], bounds[i + 1], ndim, debug)
@@ -929,6 +943,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                             print("Reached {0} sweep, stopping".format(nsweeps))
                             break
                     current_box_id = new_box_id
+                    print("moved into box", current_box_id)
                     hits = 0
                 if current_box_id >= 0:
                     StepsInsideBox = StepsInsideBox + 1
@@ -936,54 +951,96 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     if(not InsideTheBox):
                         InsideTheBox = True
 
-                    # If there is an inversion boundary
-                    if((len(linelist)) > ndim + 1):
-                        hits += 1
-                        # if hits < equilibration_hits:
-                        #    print("Discarding hit")
-                        #    continue
+                    hits += 1
 
-                        # Make sure length of line is correct
-                        if len(linelist) != 2 + 2 * ndim:
-                            print("Odd line, skipping:", line)
-                            continue
-                        InversionBoundary = np.array(
-                            [float(x) for x in linelist[ndim + 1:]])
-                        # Update upper boundary FPT
-                        u, f, t, n = UpdateBoundaryFPT(
-                            UpperFPTs[current_box_id],
-                            InversionBoundary,
-                            bounds[current_box_id + 1],
-                            FoundFirstUpperHit[current_box_id],
-                            time,
-                            LastUpperHitTime[current_box_id],
-                            NumUpperHits[current_box_id],
-                            current_box_id,
-                            False,
-                            line
-                        )
-                        UpperFPTs[current_box_id] = u
-                        FoundFirstUpperHit[current_box_id] = f
-                        LastUpperHitTime[current_box_id] = t
-                        NumUpperHits[current_box_id] = n
+                    # Make sure length of line is correct
+                    if len(linelist) != 2 + 2 * ndim:
+                        print("Odd line, skipping:", line)
+                        continue
+                    InversionBoundary = np.array(
+                        [float(x) for x in linelist[ndim + 1:]])
 
-                        # Update lower boundary FPT
-                        u, f, t, n = UpdateBoundaryFPT(
-                            LowerFPTs[current_box_id],
-                            InversionBoundary,
-                            bounds[current_box_id],
-                            FoundFirstLowerHit[current_box_id],
-                            time,
-                            LastLowerHitTime[current_box_id],
-                            NumLowerHits[current_box_id],
-                            current_box_id,
-                            True,
-                            line
-                        )
-                        LowerFPTs[current_box_id] = u
-                        FoundFirstLowerHit[current_box_id] = f
-                        LastLowerHitTime[current_box_id] = t
-                        NumLowerHits[current_box_id] = n
+                    hit_upper = False
+                    hit_lower = False 
+                    valid = True
+                    if np.allclose(InversionBoundary, bounds[current_box_id +1]):
+                        hit_upper = True
+                        boundary_hit = InversionBoundary
+                        hit_time = time
+                        FPT_list = UpperFPTs[current_box_id]
+                        found_hit = FoundFirstUpperHit[current_box_id]
+                        last_hit_time = LastUpperHitTime[current_box_id]
+                        numhits = NumUpperHits[current_box_id]
+
+                        if(found_hit):
+                            passageTime = hit_time - last_hit_time
+                            # Negative passage time will occur if files concatenated
+                            if(passageTime <= 0):
+                                found_hit = False
+                            # if hit against against different boundary to previous
+                            # and less than threshold, get rid of it.
+                            elif passageTime < passage_threshold:
+                                if not np.allclose(boundary_hit, last_bound_hit):
+                                    valid = False
+                                    print("Found short passage time at step", hit_time)
+                            else:
+                                FPT_list.append(passageTime)
+                                last_hit_time = hit_time
+                                numhits = numhits + 1
+                        else:
+                            last_hit_time = hit_time
+                            found_hit = True  
+
+                        UpperFPTs[current_box_id] = FPT_list
+                        FoundFirstUpperHit[current_box_id] = found_hit
+                        LastUpperHitTime[current_box_id] = last_hit_time
+                        NumUpperHits[current_box_id] = numhits
+                    elif np.allclose(InversionBoundary, bounds[current_box_id]):
+                        hit_lower = True
+                        boundary_hit = InversionBoundary
+                        hit_time = time
+                        FPT_list = LowerFPTs[current_box_id]
+                        found_hit = FoundFirstLowerHit[current_box_id]
+                        last_hit_time = LastLowerHitTime[current_box_id]
+                        numhits = NumLowerHits[current_box_id]
+                        
+                        if(found_hit):
+                            passageTime = hit_time - last_hit_time
+                            # Negative passage time will occur if files concatenated
+                            if(passageTime <= 0):
+                                found_hit = False
+                            # if hit against against different boundary to previous
+                            # and less than threshold, get rid of it.
+                            elif passageTime < passlsage_threshold:
+                                if not np.allclose(boundary_hit, last_bound_hit):
+                                    valid = False
+                                    print("Found short passage time at step", hit_time)
+                            else:
+                                FPT_list.append(passageTime)
+                                last_hit_time = hit_time
+                                numhits = numhits + 1
+                        else:
+                            last_hit_time = hit_time
+                            found_hit = True  
+
+                        LowerFPTs[current_box_id] = FPT_list
+                        FoundFirstLowerHit[current_box_id] = found_hit
+                        LastLowerHitTime[current_box_id] = last_hit_time
+                        NumLowerHits[current_box_id] = numhits
+                    else:
+                        print("Warning, hit a boundary, but not the box I'm in: ", line)
+
+                    last_bound_hit = InversionBoundary
+                    #if passage time was less than passage_threshold, 
+                    #then discard all counts in that time
+                    #otherwise, add to counts
+                    if not valid: 
+                        for i in range(len(tmp_counts)):
+                            tmp_counts[i] = 0
+                    else: 
+                        for i in range(len(tmp_counts)):
+                            counts[i] += tmp_counts[i] 
+                            tmp_counts[i] = 0
 
     finally:
         opfile.close()
@@ -1056,7 +1113,12 @@ def plotDecay(decay_array, outputfile, label, color_id):
 
     keylist = list(decay_array.keys())
     keylist.sort()
-    values = [decay_array[k] for k in keylist]
+    values = []
+    for k in keylist:
+        if decay_array[k] > 0:
+            values.append(math.log(decay_array[k]))
+        else:
+            values.append(0)
 
     plot2D(keylist, values, outputfile, "FPT", "R(t)", label=label,
            color=tableau20[color_id])
