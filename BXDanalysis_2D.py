@@ -148,6 +148,7 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
         Nbisections = 0
         if(dist > max_distance):
             Nbisections = int(dist / max_distance)
+
         step = 1.0 / (Nbisections + 1)
         frac = step
         bisections = []
@@ -254,8 +255,8 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
 
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
-    thresholds_lower = [0.0] * (nBounds - 1)
-    thresholds_upper = [0.0] * (nBounds - 1)
+    thresholds_lower = [MFPTthreshold] * (nBounds - 1)
+    thresholds_upper = [MFPTthreshold] * (nBounds - 1)
     if ThresholdFile:
         thresholds_lower, thresholds_upper = ReadThresholds(
             threshold_file, thresholds_lower, thresholds_upper)
@@ -337,11 +338,11 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     #Plot histograms
     plot2D(cv_dist, normalized_hist, output_dir +
            "/normalizedHist.png", "Distance along CV / Angstrom",
-           "$p(\\rho)$", ls='-')
+           "$p(\\rho)$")
     plot2D(cv_dist, np.cumsum(normalized_hist), output_dir +
            "/normalizedHistSum.png",
            "Distance along CV / Angstrom",
-           "$P(\\rho)$", ls='-')
+           "$P(\\rho)$")
 
     print("\nThe raw histogram with each box normalized to 1 is in ",
           rawBoxNormalizedHistogram.name)
@@ -372,8 +373,17 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     print('PMF graph plotted to ', free_energy_plot_file)
 
     #plot the free energy surface
+    #choose different colors for each box
+    colors = []
+    i = 0
+    for hist_plane in hist_bools:
+        if hist_plane is False:
+            i = (i + 1) % len(tableau20)
+        colors.append(tableau20[i])
+
+    #bxd_lines = ComputeDistancesAlongCV(plane_points)
     plot2D(cv_dist, free_energy, free_energy_plot_file, 'Distance along CV',
-           'RT', marker='o', color=tableau20[0], ms=8, ls='-')
+           'RT', show_plot=True, s=100, c=colors)
 
 
 def ReadThresholds(threshold_file, thresholds_lower, thresholds_upper):
@@ -430,7 +440,6 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
             print("kLower for box", i + 1, "is not greater than 0")
             return
         #compute variance in box free energy calculation
-        print("Computing variance for box:", i)
         var = ComputeBoxError(kLowerList[i+1], kUpperList[i], lower_fpts[i+1],
                               upper_fpts[i])
         box_energy_var.append(var)
@@ -465,8 +474,6 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     #compute the midpoints between box lines
     for a, b in pairwise(box_lines):
         mid_point_dist.append((b-a)*0.5 + a)
-    print(box_lines)
-    print(mid_point_dist)
     print("\nBox averaged energies/RT along path through plane points:")
     for i in range(0, len(boxFreeEnergy)):
         print('\tDistance %s: %f \t %f' %
@@ -485,8 +492,6 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     #plot box free energies with the two different error bars
     if plane_points is not None:
         x = mid_point_dist
-        print(x)
-        print(box_lines)
     else:
         x = range(len(boxFreeEnergy))
         box_lines = []
@@ -494,16 +499,16 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
            "Distance along CV / Angstrom", "RT",
            color=tableau20[0],
            error=box_energy_std,
-           ecolor=tableau20[4], capthick=2, ms=2, lw=2)
+           ecolor=tableau20[4], capthick=2, s=2)
     plot2D(x, boxFreeEnergy, output_dir +
            "/boxFreeEnergyCumError.png", "Distance along CV / Angstrom", "RT",
            color=tableau20[0], error=
-           box_energy_std_cuml, ecolor=tableau20[0], capthick=2, ms=2, lw=2)
+           box_energy_std_cuml, ecolor=tableau20[0], capthick=2, s=2)
     plot2D(x, np.cumsum(boxProbability), output_dir +
            "/boxProbability.png", "Distance along CV / Angstrom ", "$P_n$",
            ylimits=[-0.1, 1.1],
            color=tableau20[0],
-           ms=10, lw=2)
+           s=10)
     return boxFreeEnergy, boxProbability, box_energy_std_cuml
 
 
@@ -707,9 +712,11 @@ def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
             print("Filling histogram and computing FPTs from trajectory file",
                   trajectory)
             numlines = GetNumLinesInFile(trajectory)
-            lower, upper, new_counts = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID, BoxUpperID,
-                                                              passage_threshold,
-                                                              bin_planes, bin_centers, Ndim, Nsweeps, numlines)
+            lower, upper, new_counts \
+                = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID,
+                                         BoxUpperID, passage_threshold,
+                                         bin_planes, bin_centers, Ndim,
+                                         Nsweeps, numlines)
             for i in range(nBoxes):
                 fpt_lower_list[i] += lower[i]
                 fpt_upper_list[i] += upper[i]
@@ -725,8 +732,6 @@ def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
             print("Filling histogram from precomputed ",
                   "histogram file ", hist_file)
             new_counts = ReadHistogram(hist_file)
-            print("debug: len new counts: ",len(new_counts))
-            print("debug: len counts: ", len(counts))
             if len(new_counts) != len(counts):
                 print("Error! The number of bins from this file does not",
                       "match the rest of the input. Skipping this file.")
@@ -776,7 +781,6 @@ def GetFPTsAndHist(fpt_dirs, trajectory_files, BoundaryList, BoxLowerID,
     return fpt_lower_list, fpt_upper_list, counts
 
 
-
 def ReadHistogram(filename):
     """
     Reads a precomputed histogram from file,
@@ -816,7 +820,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     NumLowerHits = [0] * nboxes
     last_bound_hit = None
 
-    FoundFirstBox = False
     sweep_count = -1
 
 #   initialize two lists
@@ -841,7 +844,8 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     #set up progress bar
     if progress_bar:
         bar = progressbar.ProgressBar(maxval=numlines,
-                                      widgets=[progressbar.Bar('=', '[', ']'), ' ',
+                                      widgets=[progressbar.Bar('=', '[', ']'),
+                                               ' ',
                                                progressbar.Percentage()])
         bar.start()
 
@@ -879,12 +883,13 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 in_box = False
                 #If current bin has been set, then check if in it
                 if current_bin is not None:
-                    in_box = IsInsideBox(cv, current_bin[0], current_bin[1], ndim)
+                    in_box = IsInsideBox(cv, current_bin[0], current_bin[1],
+                                         ndim)
                 #if in current box, add it to counts
                 if in_box:
                     tmp_counts[bin_num] += 1
                 #if not in box, then need to find the bin
-                if not in_box:
+                elif in_box is not None:
                     find_bin = True
                 if find_bin:
                     found_bin = False
@@ -922,7 +927,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                         box_list += [max(current_box_id - 1, LowerBoxID),
                                      min(current_box_id + 1, UpperBoxID)]
                     box_list += range(LowerBoxID, UpperBoxID+1)
-                    print("Searching in ", box_list)
                     for i in box_list:
                         in_box = IsInsideBox(
                             cv, bounds[i], bounds[i + 1], ndim, debug)
@@ -940,10 +944,9 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     if new_box_id == LowerBoxID:
                         sweep_count += 1
                         if nsweeps is not None and sweep_count > nsweeps:
-                            print("Reached {0} sweep, stopping".format(nsweeps))
+                            print("Reached ", nsweeps, " sweep, stopping")
                             break
                     current_box_id = new_box_id
-                    print("moved into box", current_box_id)
                     hits = 0
                 if current_box_id >= 0:
                     StepsInsideBox = StepsInsideBox + 1
@@ -957,15 +960,11 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     if len(linelist) != 2 + 2 * ndim:
                         print("Odd line, skipping:", line)
                         continue
-                    InversionBoundary = np.array(
+                    boundary_hit = np.array(
                         [float(x) for x in linelist[ndim + 1:]])
 
-                    hit_upper = False
-                    hit_lower = False 
                     valid = True
-                    if np.allclose(InversionBoundary, bounds[current_box_id +1]):
-                        hit_upper = True
-                        boundary_hit = InversionBoundary
+                    if np.allclose(boundary_hit, bounds[current_box_id + 1]):
                         hit_time = time
                         FPT_list = UpperFPTs[current_box_id]
                         found_hit = FoundFirstUpperHit[current_box_id]
@@ -974,72 +973,81 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
 
                         if(found_hit):
                             passageTime = hit_time - last_hit_time
-                            # Negative passage time will occur if files concatenated
+                            # Negative passage time will occur if files
+                            # are concatenated
                             if(passageTime <= 0):
                                 found_hit = False
-                            # if hit against against different boundary to previous
+                            # if hit against against different boundary to
+                            # previous
                             # and less than threshold, get rid of it.
                             elif passageTime < passage_threshold:
-                                if not np.allclose(boundary_hit, last_bound_hit):
+                                if not np.allclose(boundary_hit,
+                                                   last_bound_hit):
                                     valid = False
-                                    print("Found short passage time at step", hit_time)
+                                    print("Found short passage time at step",
+                                          hit_time)
                             else:
                                 FPT_list.append(passageTime)
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:
                             last_hit_time = hit_time
-                            found_hit = True  
+                            found_hit = True
 
                         UpperFPTs[current_box_id] = FPT_list
                         FoundFirstUpperHit[current_box_id] = found_hit
                         LastUpperHitTime[current_box_id] = last_hit_time
                         NumUpperHits[current_box_id] = numhits
-                    elif np.allclose(InversionBoundary, bounds[current_box_id]):
-                        hit_lower = True
-                        boundary_hit = InversionBoundary
+                    elif np.allclose(boundary_hit, bounds[current_box_id]):
+                        boundary_hit = boundary_hit
                         hit_time = time
                         FPT_list = LowerFPTs[current_box_id]
                         found_hit = FoundFirstLowerHit[current_box_id]
                         last_hit_time = LastLowerHitTime[current_box_id]
                         numhits = NumLowerHits[current_box_id]
-                        
+
                         if(found_hit):
                             passageTime = hit_time - last_hit_time
-                            # Negative passage time will occur if files concatenated
+                            # Negative passage time will occur if files
+                            # concatenated
                             if(passageTime <= 0):
                                 found_hit = False
-                            # if hit against against different boundary to previous
+                            # if hit against against different boundary to
+                            # previous
                             # and less than threshold, get rid of it.
-                            elif passageTime < passlsage_threshold:
-                                if not np.allclose(boundary_hit, last_bound_hit):
+                            elif passageTime < passage_threshold:
+                                if not np.allclose(boundary_hit,
+                                                   last_bound_hit):
                                     valid = False
-                                    print("Found short passage time at step", hit_time)
+                                    print("Found short passage time at step",
+                                          hit_time)
                             else:
                                 FPT_list.append(passageTime)
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:
                             last_hit_time = hit_time
-                            found_hit = True  
+                            found_hit = True
 
                         LowerFPTs[current_box_id] = FPT_list
                         FoundFirstLowerHit[current_box_id] = found_hit
                         LastLowerHitTime[current_box_id] = last_hit_time
                         NumLowerHits[current_box_id] = numhits
                     else:
-                        print("Warning, hit a boundary, but not the box I'm in: ", line)
+                        print("Warning, hit a boundary,",
+                              "but not the box I'm in: ", line)
 
-                    last_bound_hit = InversionBoundary
-                    #if passage time was less than passage_threshold, 
+                    last_bound_hit = boundary_hit
+                    #if passage time was less than passage_threshold,
                     #then discard all counts in that time
                     #otherwise, add to counts
-                    if not valid: 
+                    remove_short_fpts = False
+                    if remove_short_fpts and not valid:
                         for i in range(len(tmp_counts)):
                             tmp_counts[i] = 0
-                    else: 
+                    else:
                         for i in range(len(tmp_counts)):
-                            counts[i] += tmp_counts[i] 
+                            counts[i] += tmp_counts[i]
                             tmp_counts[i] = 0
 
     finally:
@@ -1047,10 +1055,10 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     return LowerFPTs, UpperFPTs, counts
 
 
-def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None,
-           ylimits=None, ylines=None, **kwargs):
+def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None, show_plot=False,
+           ylimits=None, ylines=None, linecolor=tableau20[0], **kwargs):
     """
-    Useful little plotter. Any arguments to ax.plot can be added to kwargs
+    Useful little plotter. Any arguments to ax.scatter can be added to kwargs
     """
     # You typically want your plot to be ~1.33x wider than tall.
     # Common sizes: (10, 7.5) and (12, 9)
@@ -1091,12 +1099,15 @@ def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None,
                 error_kwargs[s] = kwargs[s]
                 del kwargs[s]
 
-    kwargs['lw'] = 1.5
-    kwargs['alpha'] = 1.0
-    kwargs['marker'] = 'o'
     if error_bar:
         ax.errorbar(x, y, yerr=err, **error_kwargs)
-    ax.plot(x, y, **kwargs)
+    ax.plot(x, y, lw=1.5, alpha=1.0, color=linecolor)
+    #maintain x and y limits, as scatter seems to break them.
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    ax.scatter(x, y, **kwargs)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
     if ylines is not None:
         y = ax.get_ylim()
         for x_val in ylines:
@@ -1106,6 +1117,8 @@ def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None,
         ax.legend()
 
     plt.savefig(outputfile, bbox_inches="tight")
+    if show_plot:
+        plt.show()
     plt.close()
 
 
@@ -1120,8 +1133,8 @@ def plotDecay(decay_array, outputfile, label, color_id):
         else:
             values.append(0)
 
-    plot2D(keylist, values, outputfile, "FPT", "R(t)", label=label,
-           color=tableau20[color_id])
+    plot2D(keylist, values, outputfile, "FPT", "ln R(t)", label=label,
+           linecolor=tableau20[color_id], s=8)
 
 
 def GetNumLinesInFile(opfilename):
@@ -1152,6 +1165,7 @@ def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
         upperFile.close()
 
     return LowerFPTs, UpperFPTs
+
 
 def HistogramFPTs(Upper, Lower, bin):
     """
@@ -1234,9 +1248,8 @@ def ComputeBoxError(k_lower, k_upper, lower_FPTs, upper_FPTs):
     err_lower = np.std(lower_FPTs, ddof=1)/math.sqrt(float(len(lower_FPTs)))
     #err_upper = np.std(upper_FPTs, ddof=1)
     #err_lower = np.std(lower_FPTs, ddof=1)
-    var_dg = math.pow(k_upper * err_upper, 2) + math.pow(k_lower * err_lower, 2)
-    std_dg = math.sqrt(var_dg)
-    return var_dg
+    var = math.pow(k_upper * err_upper, 2) + math.pow(k_lower * err_lower, 2)
+    return var
 
 
 def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID,
@@ -1246,7 +1259,6 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID,
     Computes the MFPTs from the list of lower and upper FPTs
     for each box
     """
-    ctr = 0
 #   calculate Mean First Passage Time
 #   MPFTS will only be averaged if they are greater than recrossTime
     nboxes = len(bounds) - 1
@@ -1399,11 +1411,14 @@ if __name__ == "__main__":
     argparser.add_argument("bounds", help="File containing the BXD bounds")
     argparser.add_argument(
         "ndim", help="Number of dimensions of BXD boundaries", type=int)
-    argparser.add_argument("--trajectories", nargs='+', help="Path of BXD output file(s)")
-    argparser.add_argument("--fpt_dirs", nargs='+', help=("Directory/Directories of FPTs",
-                           " outputted by this script"))
-    argparser.add_argument("--hist_files", nargs='+', help=("Directory/Directories to raw histogram file",
-                           " outputted by this script"))
+    argparser.add_argument("--trajectories", nargs='+',
+                           help="Path of BXD output file(s)")
+    argparser.add_argument("--fpt_dirs", nargs='+',
+                           help=("Directory/Directories of FPTs",
+                                 " outputted by this script"))
+    argparser.add_argument("--hist_files", nargs='+',
+                           help=("Directory/Directories to raw histogram file",
+                                 " outputted by this script"))
     argparser.add_argument(
         "--MFPTthreshold",
         help=("FPT threshold, any FPTs less than the given value",
