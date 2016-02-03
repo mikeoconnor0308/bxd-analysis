@@ -1,14 +1,15 @@
 #!/usr/bin/python
-import sys
-import math
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
 import argparse
 import json
-from itertools import tee
-import os
-import errno
+import math
+import sys
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+
+import utils
+
 try:
     import progressbar
     progress_bar = True
@@ -17,7 +18,6 @@ except ImportError:
     print("Warning: Could not find progressbar module. Try running:  ",
           "\n\tpip install progressbar33\n This will allow for pretty",
           "progress bar output")
-from pudb import set_trace
 
 output_dir = "analysis"
 
@@ -31,25 +31,6 @@ tableau20 = [(31, 119, 180), (174, 199, 232), (255, 127, 14), (255, 187, 120),
 tableau20 = [tuple(float(c) / 256 for c in x) for x in tableau20]
 
 
-def make_sure_path_exists(path):
-    """
-    Ensures that the path specified exists, and makes it if necessary
-    """
-    try:
-        os.makedirs(path)
-    except OSError as exception:
-        if exception.errno != errno.EEXIST:
-            raise
-
-
-def pairwise(iterable):
-    """
-    Produces a pairwise list over an iterable
-    e.g. [x,y,z,w] - > [(x,y),(y,z), (z,w)]
-    """
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
 
 
 def ComputeBoxCenters(plane_points):
@@ -60,7 +41,7 @@ def ComputeBoxCenters(plane_points):
     if plane_points is None:
         return None
     box_centers = []
-    for (a, b) in pairwise(plane_points):
+    for (a, b) in utils.get_pairwise_list(plane_points):
         box_centers.append((a + b) * 0.5)
     return box_centers
 
@@ -142,7 +123,7 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
     hist_plane_points = []
     hist_centers = []
     hist_bools = []
-    for (a, b), (ca, cb) in zip(pairwise(planes), pairwise(plane_points)):
+    for (a, b), (ca, cb) in zip(utils.get_pairwise_list(planes), utils.get_pairwise_list(plane_points)):
         dist = np.linalg.norm(ca - cb)
         Nbisections = 0
         if(dist > max_distance):
@@ -166,7 +147,7 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
     new_planes.append(planes[-1])
     hist_bools.append(False)
     hist_plane_points.append(plane_points[-1])
-    for (a, b) in pairwise(hist_plane_points):
+    for (a, b) in utils.get_pairwise_list(hist_plane_points):
         hist_centers.append((a + b) / 2.0)
     return new_planes, hist_centers, hist_plane_points, hist_bools
 
@@ -226,7 +207,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         'be within range 0 and upper box ID (' + str(BoxUpperID) + ')'
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
-    make_sure_path_exists(output_dir)
+    utils.make_sure_path_exists(output_dir)
 
     # print some info about the bounds
     for i in range(0, nBounds - 1):
@@ -468,7 +449,7 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     box_lines = ComputeDistancesAlongCV(plane_points)
     mid_point_dist = []
     #compute the midpoints between box lines
-    for a, b in pairwise(box_lines):
+    for a, b in utils.get_pairwise_list(box_lines):
         mid_point_dist.append((b-a)*0.5 + a)
     print("\nBox averaged energies/RT along path through plane points:")
     for i in range(0, len(boxFreeEnergy)):
@@ -741,7 +722,7 @@ def GetFPTsAndHist(trajectory_files,
         for trajectory in trajectory_files:
             print("Filling histogram and computing FPTs from trajectory file",
                   trajectory)
-            numlines = GetNumLinesInFile(trajectory)
+            numlines = utils.get_number_lines(trajectory)
             lower, upper, new_counts \
                 = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID,
                                          BoxUpperID, passage_threshold,
@@ -760,7 +741,7 @@ def GetFPTsAndHist(trajectory_files,
     # output FPTs to save repeat analysis time
     for boxIdx in range(BoxLowerID, BoxUpperID + 1):
         fpt_dir = output_dir + "/FPT_arrays"
-        make_sure_path_exists(fpt_dir)
+        utils.make_sure_path_exists(fpt_dir)
 
         lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
         lowerFile = open(lower_fpt_name, 'w')
@@ -845,7 +826,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     tmp_counts = [0.0] * (nbins)
     last_time = 0
     max_steps = 20000  # max steps to allow before assuming fresh file
-    for a, b in pairwise(bin_planes):
+    for a, b in utils.get_pairwise_list(bin_planes):
         bin_pairs.append(tuple([a, b]))
     #set up progress bar
     if progress_bar:
@@ -1231,11 +1212,6 @@ def plotHistogramBins(planes, bin_centers, plane_points, hist_bools, output):
     plt.close()
 
 
-def GetNumLinesInFile(opfilename):
-    print("Counting number of lines in file...")
-    num_lines = sum(1 for line in open(opfilename, 'r'))
-    print("There are ", num_lines, " lines in the file ", opfilename)
-    return num_lines
 
 
 def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
@@ -1292,7 +1268,7 @@ def HistogramFPTs(Upper, Lower, bin):
     axarr[1].set_ylabel("Count")
     axarr[1].legend()
     FPT_hist_path = output_dir + "/FPT_histograms"
-    make_sure_path_exists(FPT_hist_path)
+    utils.make_sure_path_exists(FPT_hist_path)
     plt.savefig(
         FPT_hist_path + "/" + str(bin).zfill(2) + ".png", bbox_inches="tight")
     plt.close()
@@ -1359,7 +1335,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
     kupper = [0] * nboxes
     mfpts = [0] * nboxes
     box_plot_dir = output_dir + "/mfpt_box_plots"
-    make_sure_path_exists(box_plot_dir)
+    utils.make_sure_path_exists(box_plot_dir)
     print("Box and whisker plots of MFPT for each box outputted to ",
           box_plot_dir)
     for boxIdx in range(LowerBoxID, UpperBoxID + 1):
@@ -1375,7 +1351,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
 
         Initial = len(lower_fpts)
         decay_dir = output_dir + "/decays"
-        make_sure_path_exists(decay_dir)
+        utils.make_sure_path_exists(decay_dir)
         if (Initial != 0):
             MFPT = np.mean(lower_fpts)
             mfpts.append(MFPT)
