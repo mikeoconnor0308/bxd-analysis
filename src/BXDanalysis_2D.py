@@ -3,10 +3,11 @@ import argparse
 import json
 import math
 import sys
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+
 import numpy as np
 import utils
+import visualisation as vis
+from tableau import Tableau
 
 try:
     import progressbar
@@ -19,15 +20,6 @@ except ImportError:
           "progress bar output")
 
 output_dir = "analysis"
-
-# These are the "Tableau 20" colors as RGB.
-tableau20 = [(31, 119, 180), (174, 199, 232), (255, 127, 14), (255, 187, 120),
-             (44, 160, 44), (152, 223, 138), (214, 39, 40), (255, 152, 150),
-             (148, 103, 189), (197, 176, 213), (140, 86, 75), (196, 156, 148),
-             (227, 119, 194), (247, 182, 210), (127,
-                                                127, 127), (199, 199, 199),
-             (188, 189, 34), (219, 219, 141), (23, 190, 207), (158, 218, 229)]
-tableau20 = [tuple(float(c) / 256 for c in x) for x in tableau20]
 
 
 def ComputeBoxCenters(plane_points):
@@ -229,8 +221,8 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
                       hist_centers, hist_bools)
     hist_png_out = output_dir + "/" + "hist_bounds.png"
     print("Plotting the histogram bins to ", hist_png_out)
-    plotHistogramBins(hist_planes, hist_centers, hist_plane_points,
-                      hist_bools, hist_png_out)
+    vis.plotHistogramBins(hist_planes, hist_centers, hist_plane_points,
+                          hist_bools, hist_png_out)
     # Get FPTs and populate histogram.
     fpt_lower_list, \
     fpt_upper_list, \
@@ -311,13 +303,13 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         normalizedHistogram.close()
         rawBoxNormalizedHistogram.close()
     # Plot histograms
-    plot2D(cv_dist, normalized_hist, output_dir +
-           "/normalizedHist.png", "Distance along CV / Angstrom",
-           "$p(\\rho)$")
-    plot2D(cv_dist, np.cumsum(normalized_hist), output_dir +
-           "/normalizedHistSum.png",
-           "Distance along CV / Angstrom",
-           "$P(\\rho)$")
+    vis.plot2D(cv_dist, normalized_hist, output_dir +
+               "/normalizedHist.png", "Distance along CV / Angstrom",
+               "$p(\\rho)$")
+    vis.plot2D(cv_dist, np.cumsum(normalized_hist), output_dir +
+               "/normalizedHistSum.png",
+               "Distance along CV / Angstrom",
+               "$P(\\rho)$")
 
     print("\nThe raw histogram with each box normalized to 1 is in ",
           rawBoxNormalizedHistogram.name)
@@ -352,10 +344,10 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     i = 0
     for hist_plane in hist_bools:
         if hist_plane is False:
-            i = (i + 1) % len(tableau20)
-        colors.append(tableau20[i])
-    plot2D(cv_dist, free_energy, free_energy_plot_file, 'Distance along CV',
-           'RT', show_plot=False, s=100, linecolor=tableau20[14], c=colors)
+            i = (i + 1) % len(Tableau.tableau20)
+        colors.append(Tableau.tableau20[i])
+    vis.plot2D(cv_dist, free_energy, free_energy_plot_file, 'Distance along CV',
+               'RT', show_plot=False, s=100, linecolor=Tableau.tableau20[14], c=colors)
 
 
 def ReadThresholds(threshold_file, thresholds_lower, thresholds_upper):
@@ -466,20 +458,20 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     else:
         x = range(len(boxFreeEnergy))
         box_lines = []
-    plot2D(x, boxFreeEnergy, output_dir + "/boxFreeEnergy.png",
-           "Distance along CV / Angstrom", "RT",
-           color=tableau20[0],
-           error=box_energy_std,
-           ecolor=tableau20[4], capthick=2, s=2)
-    plot2D(x, boxFreeEnergy, output_dir +
-           "/boxFreeEnergyCumError.png", "Distance along CV / Angstrom", "RT",
-           color=tableau20[0], error=
-           box_energy_std_cuml, ecolor=tableau20[0], capthick=2, s=2)
-    plot2D(x, np.cumsum(boxProbability), output_dir +
-           "/boxProbability.png", "Distance along CV / Angstrom ", "$P_n$",
-           ylimits=[-0.1, 1.1],
-           color=tableau20[0],
-           s=10)
+    vis.plot2D(x, boxFreeEnergy, output_dir + "/boxFreeEnergy.png",
+               "Distance along CV / Angstrom", "RT",
+               color=Tableau.tableau20[0],
+               error=box_energy_std,
+               ecolor=Tableau.tableau20[4], capthick=2, s=2)
+    vis.plot2D(x, boxFreeEnergy, output_dir +
+               "/boxFreeEnergyCumError.png", "Distance along CV / Angstrom", "RT",
+               color=Tableau.tableau20[0], error=
+               box_energy_std_cuml, ecolor=Tableau.tableau20[0], capthick=2, s=2)
+    vis.plot2D(x, np.cumsum(boxProbability), output_dir +
+               "/boxProbability.png", "Distance along CV / Angstrom ", "$P_n$",
+               ylimits=[-0.1, 1.1],
+               color=Tableau.tableau20[0],
+               s=10)
     return boxFreeEnergy, boxProbability, box_energy_std_cuml
 
 
@@ -1035,176 +1027,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     return LowerFPTs, UpperFPTs, counts
 
 
-def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None, show_plot=False,
-           ylimits=None, ylines=None, linecolor=tableau20[0], **kwargs):
-    """
-    Useful little plotter. Any arguments to ax.scatter can be added to kwargs
-    """
-    # You typically want your plot to be ~1.33x wider than tall.
-    # Common sizes: (10, 7.5) and (12, 9)
-    fig = plt.figure(figsize=(9, 9))
-
-    ax = fig.add_subplot(111)
-
-    # Ensure that the axis ticks only show up on the bottom and left of the
-    # plot.
-    # Ticks on the right and top of the plot are generally unnecessary
-    # chartjunk.
-    ax.get_xaxis().tick_bottom()
-    ax.get_yaxis().tick_left()
-
-    ax.set_xlabel(xlabel, fontsize=24)
-    ax.set_ylabel(ylabel, fontsize=24)
-    ax.tick_params(axis='x', labelsize='22')
-    ax.tick_params(axis='y', labelsize='22')
-
-    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-    ax.yaxis.set_major_formatter(y_formatter)
-
-    if xlimits is not None:
-        ax.set_xlim(xlimits[0], xlimits[1])
-    if ylimits is not None:
-        ax.set_ylim(ylimits[0], ylimits[1])
-
-    error_bar = False
-    error_kwargs = dict()
-    if 'error' in kwargs:
-        error_bar = True
-        err = kwargs['error']
-        del kwargs['error']
-        error_kwargs['fmt'] = 'none'
-        error_options = ['capthick', 'ecolor', 'elinewidth', 'capsize']
-        for s in error_options:
-            if s in kwargs:
-                error_kwargs[s] = kwargs[s]
-                del kwargs[s]
-    if error_bar:
-        ax.errorbar(x, y, yerr=err, **error_kwargs)
-    ax.plot(x, y, lw=1.5, alpha=1.0, color=linecolor)
-    # maintain x and y limits, as scatter seems to break them.
-    xlim = ax.get_xlim()
-    ylim = ax.get_ylim()
-    ax.scatter(x, y, **kwargs)
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    if ylines is not None:
-        y = ax.get_ylim()
-        for x_val in ylines:
-            x = [x_val] * len(y)
-            ax.plot(x, y, color="black", ls='--')
-    if 'label' in kwargs:
-        ax.legend()
-
-    plt.savefig(outputfile, bbox_inches="tight")
-    if show_plot:
-        plt.show()
-    plt.close()
-
-
-def plotDecay(decay_array, outputfile, label, color_id):
-    keylist = list(decay_array.keys())
-    keylist.sort()
-    values = []
-    for k in keylist:
-        if decay_array[k] > 0:
-            values.append(math.log(decay_array[k]))
-        else:
-            values.append(0)
-
-    plot2D(keylist, values, outputfile, "FPT", "ln R(t)", label=label,
-           linecolor=tableau20[color_id], s=8)
-
-
-def plotBoxPlot(boxes, labels, xlabel, ylabel, output, **kwargs):
-    fig, axarr = plt.subplots(2)
-
-    for ax, box, label in zip(axarr, boxes, labels):
-        ax.get_xaxis().tick_bottom()
-        ax.get_yaxis().tick_left()
-
-        ax.set_xlabel(xlabel, fontsize=24)
-        ax.set_ylabel(ylabel, fontsize=24)
-        ax.tick_params(axis='x', labelsize='22')
-        ax.tick_params(axis='y', labelsize='22')
-
-        # y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-        # ax.yaxis.set_major_formatter(y_formatter)
-        ax.set_yscale('log')
-        ax.boxplot(box, labels=[label], showmeans=True, **kwargs)
-
-    plt.savefig(output, bbox_inches="tight")
-    plt.close()
-
-
-def plotHistogramBins(planes, bin_centers, plane_points, hist_bools, output):
-    """
-    Plots the planes used for histogram binning, along with the line
-    through the centers of the bins used to define the reaction coordinate
-    for the free energy plot
-    """
-
-    fig = plt.figure(figsize=(10, 10), dpi=100)
-    ax = fig.add_subplot(111)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    ax.get_xaxis().tick_bottom()
-    ax.get_yaxis().tick_left()
-
-    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-    ax.yaxis.set_major_formatter(y_formatter)
-    ax.tick_params(axis='x', labelsize='20')
-    ax.tick_params(axis='y', labelsize='20')
-
-    x_min = min([x[0] for x in ((bin_centers + plane_points))])
-    y_min = min([y[1] for y in ((bin_centers + plane_points))])
-    x_max = max([x[0] for x in ((bin_centers + plane_points))])
-    y_max = max([y[1] for y in ((bin_centers + plane_points))])
-    x_min = x_min - 0.05 * abs(x_max - x_min)
-    x_max = x_max + 0.05 * abs(x_max - x_min)
-    y_min = y_min - 0.05 * abs(y_max - y_min)
-    y_max = y_max + 0.05 * abs(y_max - y_min)
-
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-
-    bound_length = 0.4
-    box_id = 0
-    for b, point, hist in zip(planes, plane_points, hist_bools):
-        if abs(b[1]) < 0.01:
-            lower = max(y_min, point[1] - bound_length * 0.5)
-            upper = min(y_max, point[1] + bound_length * 0.5)
-            y = np.array(np.linspace(lower, upper))
-            x = [-(b[2] / b[0])] * len(y)
-        else:
-            norm_perp = np.array([-b[1], b[0]])
-            point_np = np.array(point)
-            x1 = (bound_length * 0.5 * norm_perp + point_np)[0]
-            x2 = (point_np - bound_length * 0.5 * norm_perp)[0]
-            lower = min(x1, x2)
-            upper = max(x1, x2)
-            # lower = 0.0
-            x = np.array(np.linspace(lower, upper))
-            y = [(-b[0] * v - b[2]) / b[1] for v in x]
-        if hist:
-            bline, = ax.plot(x, y, ls=":", lw=1.2, color="black", alpha=0.8)
-        else:
-            bline, = ax.plot(x, y, "-", lw=1.2, color="black", alpha=1.0)
-            box_id += 1
-
-    c_x = [x[0] for x in bin_centers]
-    c_y = [y[1] for y in bin_centers]
-    ax.plot(c_x, c_y, "--", marker="o", lw=1.0, ms=5, color=tableau20[14])
-    print("plane points: ", plane_points)
-    points_x = [x[0] for x in plane_points]
-    points_y = [y[1] for y in plane_points]
-    ax.plot(points_x, points_y, marker="o", lw=1.0, ms=10, color=tableau20[14])
-
-    ax.set_title("Histogram Bins", y=1.06, fontsize=22)
-    plt.savefig(output, bbox_inches="tight")
-    plt.close()
-
-
 def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
     """
     Read FPTs that have been precomputed by GetFirstPassageTimesAllBoxes
@@ -1226,43 +1048,6 @@ def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
         upperFile.close()
 
     return LowerFPTs, UpperFPTs
-
-
-def HistogramFPTs(Upper, Lower, bin):
-    """
-    Produce histograms of upper and lower FPTs
-    """
-
-    Upper = np.array(Upper)
-    Lower = np.array(Lower)
-    upper_str = str(bin) + " - Upper "
-
-    upper_bins = 10 ** np.linspace(np.log10(min(Upper)), np.log10(max(Upper)))
-    lower_bins = 10 ** np.linspace(np.log10(min(Lower)), np.log10(max(Lower)))
-
-    ab_min = min(min(Upper), min(Lower))
-    ab_max = max(max(Upper), max(Lower))
-    f, axarr = plt.subplots(2)
-    n, b, p = axarr[0].hist(
-            Upper, upper_bins, alpha=0.5, label=upper_str, color='g')
-    axarr[0].set_xscale('log')
-    axarr[0].set_xlim(ab_min, ab_max)
-    axarr[0].set_ylabel("Count")
-    axarr[0].legend()
-
-    lower_str = str(bin) + " - Lower "
-
-    n, b, p = axarr[1].hist(
-            Lower, lower_bins, alpha=0.5, label=lower_str, color='b')
-    axarr[1].set_xscale('log')
-    axarr[1].set_xlim(ab_min, ab_max)
-    axarr[1].set_ylabel("Count")
-    axarr[1].legend()
-    FPT_hist_path = output_dir + "/FPT_histograms"
-    utils.make_sure_path_exists(FPT_hist_path)
-    plt.savefig(
-            FPT_hist_path + "/" + str(bin).zfill(2) + ".png", bbox_inches="tight")
-    plt.close()
 
 
 def reject_outliers(Upper, Lower, bin, threshold_lower=0.0,
@@ -1334,10 +1119,10 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
         upper_fpts = UpperFPTs[boxIdx]
 
         boxplotname = box_plot_dir + "/" + str(boxIdx)
-        plotBoxPlot([lower_fpts, upper_fpts],
-                    [str(boxIdx) + " to " + str(boxIdx - 1),
-                     str(boxIdx) + " to " + str(boxIdx + 1)],
-                    "Box", "FPT", boxplotname)
+        vis.plotBoxPlot([lower_fpts, upper_fpts],
+                        [str(boxIdx) + " to " + str(boxIdx - 1),
+                         str(boxIdx) + " to " + str(boxIdx + 1)],
+                        "Box", "FPT", boxplotname)
 
         Initial = len(lower_fpts)
         decay_dir = output_dir + "/decays"
@@ -1361,7 +1146,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
             color = boxIdx
 
             # Plot the decay profile
-            plotDecay(LowerDecayArray, lowerDecayPlotName, plotlabel, color)
+            vis.plotDecay(LowerDecayArray, lowerDecayPlotName, plotlabel, color)
 
             keylist = list(LowerDecayArray.keys())
             keylist.sort()
@@ -1397,7 +1182,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
             plotlabel = str(boxIdx) + " to " + str(boxIdx + 1)
             color = boxIdx
 
-            plotDecay(UpperDecayArray, upperDecayPlotName, plotlabel, color)
+            vis.plotDecay(UpperDecayArray, upperDecayPlotName, plotlabel, color)
 
             keylist = list(UpperDecayArray.keys())
             keylist.sort()
