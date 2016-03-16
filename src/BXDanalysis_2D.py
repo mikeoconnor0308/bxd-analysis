@@ -5,9 +5,9 @@ import math
 import sys
 
 import numpy as np
-import utils
-import visualisation as vis
-from tableau import Tableau
+import bxd.utils
+import bxd.visualisation as vis
+from bxd.tableau import Tableau
 
 try:
     import progressbar
@@ -30,7 +30,7 @@ def ComputeBoxCenters(plane_points):
     if plane_points is None:
         return None
     box_centers = []
-    for (a, b) in utils.get_pairwise_list(plane_points):
+    for (a, b) in bxd.utils.get_pairwise_list(plane_points):
         box_centers.append((a + b) * 0.5)
     return box_centers
 
@@ -112,7 +112,7 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
     hist_plane_points = []
     hist_centers = []
     hist_bools = []
-    for (a, b), (ca, cb) in zip(utils.get_pairwise_list(planes), utils.get_pairwise_list(plane_points)):
+    for (a, b), (ca, cb) in zip(bxd.utils.get_pairwise_list(planes), bxd.utils.get_pairwise_list(plane_points)):
         dist = np.linalg.norm(ca - cb)
         Nbisections = 0
         if (dist > max_distance):
@@ -135,7 +135,7 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
     new_planes.append(planes[-1])
     hist_bools.append(False)
     hist_plane_points.append(plane_points[-1])
-    for (a, b) in utils.get_pairwise_list(hist_plane_points):
+    for (a, b) in bxd.utils.get_pairwise_list(hist_plane_points):
         hist_centers.append((a + b) / 2.0)
     return new_planes, hist_centers, hist_plane_points, hist_bools
 
@@ -187,14 +187,14 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         BoxUpperID = len(BoundaryList) - 2
 
     # Error checking
-    assert BoxUpperID >= 0 and BoxUpperID < len(
+    assert 0 <= BoxUpperID < len(
             BoundaryList) - 1, 'Upper Box ID must be within range 0' \
                                'and number of bounds - 2 (' + str(len(BoundaryList) - 2) + ')'
-    assert BoxLowerID >= 0 and BoxLowerID <= BoxUpperID, 'Lower Box ID must' \
-                                                         'be within range 0 and upper box ID (' + str(BoxUpperID) + ')'
+    assert 0 <= BoxLowerID <= BoxUpperID, 'Lower Box ID must' \
+                                          'be within range 0 and upper box ID (' + str(BoxUpperID) + ')'
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
-    utils.make_sure_path_exists(output_dir)
+    bxd.utils.make_sure_path_exists(output_dir)
 
     # print some info about the bounds
     for i in range(0, nBounds - 1):
@@ -350,39 +350,6 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
                'RT', show_plot=False, s=100, linecolor=Tableau.tableau20[14], c=colors)
 
 
-def ReadThresholds(threshold_file, thresholds_lower, thresholds_upper):
-    """
-
-    Reads thresholds from file in form "boxid lower upper"
-    and updates thresholds array with those found.
-
-    """
-
-    f = open(threshold_file, 'r')
-    try:
-        for line in f:
-            fields = line.split()
-            assert len(
-                    fields) == 3, "Expected 3 fields in line in threshold file"
-            box = int(fields[0])
-            lower = float(fields[1])
-            upper = float(fields[2])
-            assert len(
-                    thresholds_upper) > box, "Box specified in thresholds file is outside range"
-            assert len(
-                    thresholds_lower) > box, "Box specified in thresholds file is outside range"
-            thresholds_lower[box] = lower
-            thresholds_upper[box] = upper
-    finally:
-        f.close()
-    for i in range(len(thresholds_lower)):
-        print("First passage times less than ", thresholds_lower[
-            i], "for box ", i, " to box ", i - 1, "will be neglected")
-        print("First passage times less than ", thresholds_upper[
-            i], "for box ", i, " to box ", i + 1, "will be neglected")
-    return thresholds_lower, thresholds_upper
-
-
 def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
                            BoxLowerID, BoxUpperID, plane_points):
     # calculate the box averaged Free Energy distribution
@@ -435,7 +402,7 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     box_lines = ComputeDistancesAlongCV(plane_points)
     mid_point_dist = []
     # compute the midpoints between box lines
-    for a, b in utils.get_pairwise_list(box_lines):
+    for a, b in bxd.utils.get_pairwise_list(box_lines):
         mid_point_dist.append((b - a) * 0.5 + a)
     print("\nBox averaged energies/RT along path through plane points:")
     for i in range(0, len(boxFreeEnergy)):
@@ -707,7 +674,7 @@ def GetFPTsAndHist(trajectory_files,
         for trajectory in trajectory_files:
             print("Filling histogram and computing FPTs from trajectory file",
                   trajectory)
-            numlines = utils.get_number_lines(trajectory)
+            numlines = bxd.utils.get_number_lines(trajectory)
             lower, upper, new_counts \
                 = GetFPTsAndHistFromTraj(trajectory, BoundaryList, BoxLowerID,
                                          BoxUpperID, passage_threshold,
@@ -726,7 +693,7 @@ def GetFPTsAndHist(trajectory_files,
     # output FPTs to save repeat analysis time
     for boxIdx in range(BoxLowerID, BoxUpperID + 1):
         fpt_dir = output_dir + "/FPT_arrays"
-        utils.make_sure_path_exists(fpt_dir)
+        bxd.utils.make_sure_path_exists(fpt_dir)
 
         lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
         lowerFile = open(lower_fpt_name, 'w')
@@ -811,7 +778,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     tmp_counts = [0.0] * (nbins)
     last_time = 0
     max_steps = 20000  # max steps to allow before assuming fresh file
-    for a, b in utils.get_pairwise_list(bin_planes):
+    for a, b in bxd.utils.get_pairwise_list(bin_planes):
         bin_pairs.append(tuple([a, b]))
     # set up progress bar
     if progress_bar:
@@ -1110,7 +1077,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
     kupper = [0] * nboxes
     mfpts = [0] * nboxes
     box_plot_dir = output_dir + "/mfpt_box_plots"
-    utils.make_sure_path_exists(box_plot_dir)
+    bxd.utils.make_sure_path_exists(box_plot_dir)
     print("Box and whisker plots of MFPT for each box outputted to ",
           box_plot_dir)
     for boxIdx in range(LowerBoxID, UpperBoxID + 1):
@@ -1126,7 +1093,7 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
 
         Initial = len(lower_fpts)
         decay_dir = output_dir + "/decays"
-        utils.make_sure_path_exists(decay_dir)
+        bxd.utils.make_sure_path_exists(decay_dir)
         if (Initial != 0):
             MFPT = np.mean(lower_fpts)
             mfpts.append(MFPT)
