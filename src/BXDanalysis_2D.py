@@ -21,6 +21,10 @@ except ImportError:
 
 output_dir = "analysis"
 
+# 2d histogram for each box
+box_counts_twod_x = []
+box_counts_twod_y = []
+
 
 def ComputeBoxCenters(plane_points):
     """
@@ -229,6 +233,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     hist_counts = GetFPTsAndHist(TrajectoryFiles,
                                  PrevAnalysisDir,
                                  BoundaryList,
+                                 plane_points,
                                  BoxLowerID,
                                  BoxUpperID,
                                  hist_planes,
@@ -628,6 +633,7 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
 def GetFPTsAndHist(trajectory_files,
                    prev_analysis_dir,
                    BoundaryList,
+                   plane_points,
                    BoxLowerID,
                    BoxUpperID,
                    bin_planes,
@@ -646,6 +652,11 @@ def GetFPTsAndHist(trajectory_files,
     fpt_lower_list = [[] for x in range(nBoxes)]
     fpt_upper_list = [[] for x in range(nBoxes)]
     counts = [0.0] * (nbins)
+
+    global box_counts_twod_x
+    box_counts_twod_x = [[] for x in range(nBoxes)]
+    global box_counts_twod_y
+    box_counts_twod_y = [[] for x in range(nBoxes)]
 
     # loop over any precomputed histogram files (RawHistogram.txt)
     if prev_analysis_dir is not None:
@@ -690,6 +701,7 @@ def GetFPTsAndHist(trajectory_files,
                 for i in range(len(counts)):
                     counts[i] += new_counts[i]
 
+    heatmap_dir = output_dir + "/2D_Histograms"
     # output FPTs to save repeat analysis time
     for boxIdx in range(BoxLowerID, BoxUpperID + 1):
         fpt_dir = output_dir + "/FPT_arrays"
@@ -706,6 +718,18 @@ def GetFPTsAndHist(trajectory_files,
         for fpt in fpt_upper_list[boxIdx]:
             print(str(fpt), file=upperFile)
         upperFile.close()
+
+        # TODO generalise this.
+        # produce heat maps for each box.
+        bxd.utils.make_sure_path_exists(heatmap_dir)
+        vis.Box2DHistogram(box_counts_twod_x[boxIdx], box_counts_twod_y[boxIdx], BoundaryList[boxIdx],
+                           BoundaryList[boxIdx + 1], boxIdx, "C - D Distance / Angstrom", "F - D Distance / Angstrom",
+                           heatmap_dir + "/box_" + str(boxIdx) + ".png")
+
+    print("plotting all 2d boxes")
+    vis.plot_all_box_2d_hist(box_counts_twod_x, box_counts_twod_y, BoundaryList, plane_points,
+                             "C - D Distance / Angstrom", "F - D Distance / Angstrom", heatmap_dir + "/all_boxes.png")
+
     print("FPTs outputted to " + fpt_dir)
 
     # write out the raw histogram
@@ -831,6 +855,9 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 # if in current box, add it to counts
                 if in_box:
                     tmp_counts[bin_num] += 1
+
+                    box_counts_twod_x[bin_num].append(cv[0])
+                    box_counts_twod_y[bin_num].append(cv[1])
                 # if not in box, then need to find the bin
                 elif in_box is not None:
                     find_bin = True
@@ -842,6 +869,8 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                             if IsInsideBox(cv, pair[0], pair[1], ndim):
                                 bin_num = i
                                 tmp_counts[bin_num] += 1
+                                box_counts_twod_x[bin_num].append(cv[0])
+                                box_counts_twod_y[bin_num].append(cv[1])
                                 found_bin = True
                                 current_bin = pair
                                 break

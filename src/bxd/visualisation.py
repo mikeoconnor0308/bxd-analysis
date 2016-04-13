@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import bxd.utils as utils
 from bxd.tableau import Tableau
+from matplotlib.colors import LogNorm
 
 
 def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None, show_plot=False,
@@ -166,7 +167,6 @@ def plotHistogramBins(planes, bin_centers, plane_points, hist_bools, output):
     c_x = [x[0] for x in bin_centers]
     c_y = [y[1] for y in bin_centers]
     ax.plot(c_x, c_y, "--", marker="o", lw=1.0, ms=5, color=Tableau.tableau20[14])
-    print("plane points: ", plane_points)
     points_x = [x[0] for x in plane_points]
     points_y = [y[1] for y in plane_points]
     ax.plot(points_x, points_y, marker="o", lw=1.0, ms=10, color=Tableau.tableau20[14])
@@ -174,6 +174,108 @@ def plotHistogramBins(planes, bin_centers, plane_points, hist_bools, output):
     ax.set_title("Histogram Bins", y=1.06, fontsize=22)
     plt.savefig(output, bbox_inches="tight")
     plt.close()
+
+def plot_all_box_2d_hist(cv_x, cv_y, bounds, plane_points, xlabel, ylabel, output):
+    fig = plt.figure(figsize=(12, 6), dpi=200)
+    ax = fig.add_subplot(111)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    ax.get_xaxis().tick_bottom()
+    ax.get_yaxis().tick_left()
+
+    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
+    ax.yaxis.set_major_formatter(y_formatter)
+    ax.tick_params(axis='x', labelsize='20')
+    ax.tick_params(axis='y', labelsize='20')
+
+    ax.set_xlabel(xlabel, fontsize=24)
+    ax.set_ylabel(ylabel, fontsize=24)
+
+    ax.tick_params(axis='x', labelsize='22')
+    ax.tick_params(axis='y', labelsize='22')
+
+    plt.hold(True)
+    x = []
+    y = []
+    for i in range(len(bounds)-1):
+        lower_bound = bounds[i]
+        upper_bound = bounds[i+1]
+        x += cv_x[i]
+        y += cv_y[i]
+
+    ax.hist2d(x, y, bins=200, norm=LogNorm())
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    bound_length = 0.5
+    for (b, point) in zip(bounds, plane_points):
+        if b[1] == 0.0:
+            lower = point[1] - bound_length*0.5
+            upper = point[1] + bound_length*0.5
+            y = np.array(np.linspace(lower, upper))
+            x = [-(b[2] / b[0])] * len(y)
+        else:
+            #calculate line based on vector perpendicular to norm b[1] is x direction of plane.
+            lower = point[0] -0.5*bound_length*b[1]
+            upper = point[0] +0.5*bound_length*b[1]
+            print("bound: ", b, " point: ", point)
+            print("lower: ", lower, " upper", upper)
+            x = np.array(np.linspace(lower, upper))
+            y = [(-b[0] * v - b[2]) / b[1] for v in x]
+        ax.plot(x, y, "-", lw=6.0, color="black", alpha=1.0)
+
+    plt.savefig(output, bbox_inches="tight");
+    plt.close()
+
+
+def Box2DHistogram(cv_x, cv_y, lower_bound, upper_bound, box_id, xlabel, ylabel, output):
+    fig = plt.figure(figsize=(10, 10), dpi=200)
+    ax = fig.add_subplot(111)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    ax.get_xaxis().tick_bottom()
+    ax.get_yaxis().tick_left()
+
+    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
+    ax.yaxis.set_major_formatter(y_formatter)
+    ax.tick_params(axis='x', labelsize='20')
+    ax.tick_params(axis='y', labelsize='20')
+
+    ax.set_xlabel(xlabel, fontsize=24)
+    ax.set_ylabel(ylabel, fontsize=24)
+
+    ax.tick_params(axis='x', labelsize='22')
+    ax.tick_params(axis='y', labelsize='22')
+
+
+    x_min = min(lower_bound[0], upper_bound[0])
+    x_min *=0.95
+    x_max = max(lower_bound[0], upper_bound[0])
+    x_max *=1.05
+    y_min = min(lower_bound[1], upper_bound[1])
+    y_min *=0.95
+    y_max = max(lower_bound[1], upper_bound[1])
+    y_max *=1.05
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+
+    plt.hist2d(cv_x, cv_y, bins=100, norm=LogNorm())
+    plt.colorbar()
+
+    for b in [lower_bound, upper_bound]:
+        if b[1] == 0.0:
+            y = np.array(np.linspace(y_min, y_max))
+            x = [-(b[2] / b[0])] * len(y)
+        else:
+            x = np.array(np.linspace(x_min, x_max))
+            y = [(-b[0] * v - b[2]) / b[1] for v in x]
+        ax.plot(x, y, "-", lw=6.0, color="black", alpha=1.0)
+
+    plt.savefig(output, bbox_inches="tight");
+    plt.close()
+
 
 def HistogramFPTs(Upper, Lower, bin, output_dir):
     """

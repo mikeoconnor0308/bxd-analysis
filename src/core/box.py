@@ -20,7 +20,7 @@ class Box:
         """
         return self.bounds[0]
 
-    @property.setter
+    @lower_bound.setter
     def lower_bound(self, bound):
         """
         Sets the lower bound of the box.
@@ -28,6 +28,7 @@ class Box:
         :param bound: New lower bound.
         """
         self.bounds[0] = bound
+        self.ensure_norm_consistency()
 
     @property
     def upper_bound(self):
@@ -37,7 +38,7 @@ class Box:
         """
         return self.bounds[1]
 
-    @property.setter
+    @upper_bound.setter
     def upper_bound(self, bound):
         """
         Sets the upper bound of the box.
@@ -45,49 +46,65 @@ class Box:
         :param bound: New upper bound.
         """
         self.bounds[1] = bound
+        self.ensure_norm_consistency()
 
-    def __init__(self, lower_bound, upper_bound, index):
+    def __init__(self, lower_bound, upper_bound, index=0):
         """
 
+        :type index: int
         :param lower_bound: The 'lower' bound of box
         :param upper_bound: The 'upper' bound of box
         :param index: The index of the box.
         :return:
         """
 
-        assert len(lower_bound) == len(
-                upper_bound), "Tried to create a box with unmatched dimensionalities on the boundaries!"
+        assert lower_bound.dimensionality == upper_bound.dimensionality, \
+            "Tried to create a box with unmatched dimensionalities on the boundaries!"
 
         self.bounds = [lower_bound, upper_bound]
         self.index = index
-        self.dimensionality = len(lower_bound)
+        self.dimensionality = lower_bound.dimensionality
+
+        self.ensure_norm_consistency()
+
+    def ensure_norm_consistency(self):
+        """
+        Ensures that the norms of the lower and upper bounds are oriented in a direction consistent with the
+        functional framework of BXD.
+
+        This is required for determining whether a point is between two bounds (see is_point_in_box).
+        """
+
+        bound_changed = False
+
+        # compute signed distance from lower bound to upper bound
+        lower_to_upper_dist = self.upper_bound.distance(self.lower_bound.point)
+        # this distance should be greater than zero, implying there's a progression from lower to upper bound
+        # in the geometry.
+        if lower_to_upper_dist < 0:
+            self.lower_bound.plane.norm *= -1
+            self.lower_bound.plane.D *= -1
+            bound_changed = True
+
+        # compute signed distance from upper bound to lower bound
+        upper_to_lower_dist = self.lower_bound.distance(self.upper_bound.point)
+        if upper_to_lower_dist > 0:
+            self.lower_bound.plane.norm *= -1
+            self.lower_bound.plane.D *= -1
+            bound_changed = True
+
+        return bound_changed
 
     def is_point_in_box(self, point):
 
         assert len(point) == self.dimensionality, "Dimensionality of point does not match dimensionality of boundary!"
-        # Compute the signed distance from the plane to rho from each bound
-        dist_lower = np.dot(point, self.lower_bound.plane)
-        dist_upper = np.dot(point, self.upper_bound.plane)
-
-        """
-        There is a potential floating point error here when the distance to
-        the plane is very near zero.
-        Because of the precision of the plane outputted to file,
-        it is possible that the sign of distance to the plane could be incorrect.
-        In this case, either an inversion will occur, or the next step will place
-        us more firmly in the the next box. This function will return None in this
-        case, and the calling function will make a decision.
-
-        UPDATE: I've decided to not implement this, but leave here for reference.
-
-        threshold = 1.0e-06
-        if abs(dist_lower) < threshold or abs(dist_upper) < threshold:
-            return None
-        """
+        # Compute the signed distance from the plane to point from each bound
+        dist_lower = self.lower_bound.distance(point)
+        dist_upper = self.upper_bound.distance(point)
 
         """
         The sign of the distance tells us which direction from the plane the point
-        is. The sign is different between the lower and upper bound distances then
+        is. If the sign is different between the lower and upper bound distances then
         the point is between the boundaries.
         """
         if sign(dist_lower) != sign(dist_upper):
