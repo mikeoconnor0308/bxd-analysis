@@ -25,6 +25,9 @@ output_dir = "analysis"
 box_counts_twod_x = []
 box_counts_twod_y = []
 
+x_cv_label = "C - D Distance (Angstrom)"
+y_cv_label = "F - D Distance (Angstrom)"
+contour_file = None
 
 def ComputeBoxCenters(plane_points):
     """
@@ -131,8 +134,12 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
         if (Nbisections == 0):
             continue
         for i in range(Nbisections):
-            bisections.append(BisectPlane(a, b, frac))
-            hist_plane_points.append(ca + frac * (cb - ca))
+            new_plane = BisectPlane(a, b, frac)
+            bisections.append(new_plane)
+            plane_point = ca + frac * (cb - ca)
+            plane_point_proj = (np.dot(new_plane[:-1], plane_point)+new_plane[-1]) * new_plane[:-1]
+            plane_point = plane_point - plane_point_proj
+            hist_plane_points.append(plane_point)
             hist_bools.append(True)
             frac += step
         new_planes += bisections
@@ -226,7 +233,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     hist_png_out = output_dir + "/" + "hist_bounds.png"
     print("Plotting the histogram bins to ", hist_png_out)
     vis.plotHistogramBins(hist_planes, hist_centers, hist_plane_points,
-                          hist_bools, hist_png_out)
+                          hist_bools, x_cv_label, y_cv_label, hist_png_out, contour_file)
     # Get FPTs and populate histogram.
     fpt_lower_list, \
     fpt_upper_list, \
@@ -722,13 +729,14 @@ def GetFPTsAndHist(trajectory_files,
         # TODO generalise this.
         # produce heat maps for each box.
         bxd.utils.make_sure_path_exists(heatmap_dir)
-        vis.Box2DHistogram(box_counts_twod_x[boxIdx], box_counts_twod_y[boxIdx], BoundaryList[boxIdx],
-                           BoundaryList[boxIdx + 1], boxIdx, "C - D Distance / Angstrom", "F - D Distance / Angstrom",
+        vis.plot_box_2d_hist(box_counts_twod_x[boxIdx], box_counts_twod_y[boxIdx], [BoundaryList[boxIdx],
+                           BoundaryList[boxIdx + 1]],[plane_points[boxIdx], plane_points[boxIdx+1]], boxIdx, x_cv_label, y_cv_label,
                            heatmap_dir + "/box_" + str(boxIdx) + ".png")
 
+    vis.plot_time_in_boxes(box_counts_twod_x, box_counts_twod_y, "time_in_box.png")
     print("plotting all 2d boxes")
     vis.plot_all_box_2d_hist(box_counts_twod_x, box_counts_twod_y, BoundaryList, plane_points,
-                             "C - D Distance / Angstrom", "F - D Distance / Angstrom", heatmap_dir + "/all_boxes.png")
+                             x_cv_label, y_cv_label, heatmap_dir + "/all_boxes.png")
 
     print("FPTs outputted to " + fpt_dir)
 
@@ -839,12 +847,15 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
             if current_box_id is not None and time - last_time > max_steps:
                 FoundFirstUpperHit[current_box_id] = False
                 FoundFirstLowerHit[current_box_id] = False
+
+
             last_time = time
             # perform histogram filling on lines that are not inversions.
             stride = 100
             if len(linelist) == ndim + 1 or hit_counter > stride:
                 if hit_counter > stride:
                     hit_counter = 0
+
 
                 find_bin = False
                 in_box = False
@@ -856,8 +867,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 if in_box:
                     tmp_counts[bin_num] += 1
 
-                    box_counts_twod_x[bin_num].append(cv[0])
-                    box_counts_twod_y[bin_num].append(cv[1])
                 # if not in box, then need to find the bin
                 elif in_box is not None:
                     find_bin = True
@@ -869,8 +878,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                             if IsInsideBox(cv, pair[0], pair[1], ndim):
                                 bin_num = i
                                 tmp_counts[bin_num] += 1
-                                box_counts_twod_x[bin_num].append(cv[0])
-                                box_counts_twod_y[bin_num].append(cv[1])
                                 found_bin = True
                                 current_bin = pair
                                 break
@@ -878,6 +885,10 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 i = i + 1
                         else:
                             break
+                #this check is not totally correct, a small number will be dropped when crossing boundary.
+                if IsInsideBox(cv, bounds[current_box_id], bounds[current_box_id +1], ndim, False):
+                    box_counts_twod_x[current_box_id].append(cv[0])
+                    box_counts_twod_y[current_box_id].append(cv[1])
 
             # perform FPT calculations on lines that are inversions
             if len(linelist) > ndim + 1:
@@ -1288,6 +1299,7 @@ if __name__ == "__main__":
             action="store_true")
     argparser.add_argument(
             "--output_dir", help="Output directory, default: analysis")
+
     args = argparser.parse_args()
     bounds_file = args.bounds
     ndim = args.ndim
