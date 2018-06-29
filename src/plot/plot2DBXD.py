@@ -7,7 +7,7 @@ import argparse
 import ast
 import json
 from matplotlib.mlab import griddata
-from pudb import set_trace
+#from pudb import set_trace
 
 
 class Bound(object):

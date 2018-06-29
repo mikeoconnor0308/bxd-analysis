@@ -319,16 +319,17 @@ def plot_box_2d_hist(cv_x, cv_y, bounds, plane_points, box_id, xlabel, ylabel, o
 
 
 
-    x_min = min(cv_x)
-    x_max = max(cv_x)
+    x_min = min(cv_x[box_id])
+    x_max = max(cv_x[box_id])
     x_length = x_max - x_min
     x_min -= 0.1*x_length
     x_max += 0.1*x_length
-    y_min = min(cv_y)
-    y_max = max(cv_y)
+    y_min = min(cv_y[box_id])
+    y_max = max(cv_y[box_id])
     y_length = y_max - y_min
     y_min -= 0.1*y_length
     y_max += 0.1*y_length
+
 
     """
     x = []
@@ -336,11 +337,15 @@ def plot_box_2d_hist(cv_x, cv_y, bounds, plane_points, box_id, xlabel, ylabel, o
     for i in range(min(box_id-1, 0), min(box_id + 1, len(bounds)-1)):
         x += cv_x[i]
         y += cv_y[i]
-
-    plt.hist2d(x, y, bins=400, norm=LogNorm())
     """
+    plt.hold(True)
+    if box_id > 0:
+        plt.hist2d(cv_x[box_id-1], cv_y[box_id-1], bins=100, norm=LogNorm())
+    if box_id < len(cv_x) - 1:
+        plt.hist2d(cv_x[box_id+1], cv_y[box_id+1], bins=100, norm=LogNorm())
+    plt.hist2d(cv_x[box_id], cv_y[box_id], bins=100, norm=LogNorm())
 
-    plt.hist2d(cv_x, cv_y, bins=100, norm=LogNorm())
+    # plt.hist2d(cv_x, cv_y, bins=100, norm=LogNorm())
     bound_length = 0.5
     for (b, point) in zip(bounds, plane_points) :
         if b[1] == 0.0:
@@ -360,7 +365,7 @@ def plot_box_2d_hist(cv_x, cv_y, bounds, plane_points, box_id, xlabel, ylabel, o
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
-    plt.show()
+    #plt.show()
     plt.savefig(output, bbox_inches="tight");
     plt.close()
 

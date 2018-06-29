@@ -729,8 +729,7 @@ def GetFPTsAndHist(trajectory_files,
         # TODO generalise this.
         # produce heat maps for each box.
         bxd.utils.make_sure_path_exists(heatmap_dir)
-        vis.plot_box_2d_hist(box_counts_twod_x[boxIdx], box_counts_twod_y[boxIdx], [BoundaryList[boxIdx],
-                           BoundaryList[boxIdx + 1]],[plane_points[boxIdx], plane_points[boxIdx+1]], boxIdx, x_cv_label, y_cv_label,
+        vis.plot_box_2d_hist(box_counts_twod_x, box_counts_twod_y, BoundaryList, plane_points, boxIdx, x_cv_label, y_cv_label,
                            heatmap_dir + "/box_" + str(boxIdx) + ".png")
 
     vis.plot_time_in_boxes(box_counts_twod_x, box_counts_twod_y, "time_in_box.png")
