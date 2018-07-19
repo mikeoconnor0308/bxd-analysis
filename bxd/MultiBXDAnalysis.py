@@ -3,10 +3,11 @@ import argparse
 import json
 import math
 import sys
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+
 import numpy as np
-import utils
+import bxd.bxd.utility as utils
+import bxd.bxd.visualisation as vis
+from bxd.bxd.tableau import Tableau
 
 try:
     import progressbar
@@ -18,16 +19,175 @@ except ImportError:
           "\n\tpip install progressbar33\n This will allow for pretty",
           "progress bar output")
 
+
+def _read_bounds_json(json_file: str, reverse_bounds: bool = False):
+    """
+    Reads the bounds json file outputted by adaptive bxd.
+    Will then compute centers of boxes from the plane points
+
+    :param json_file: json file with bounds.
+    :param reverse_bounds: whether to reverse the boundaries upon reading them in.
+    :return: boundary planes, boundary points, boundary centers, histogram centers.
+    """
+
+    assert isinstance(json_file, str), "Json_file is not a string"
+
+    json_data = open(json_file).read()
+    data = json.loads(json_data)
+
+    planes = []
+    plane_points = []
+    centers = []
+    hists = []
+    bounds = data["bounds"]
+    for b in bounds:
+        p = b["plane"]
+        plane = np.array([float(x) for x in p])
+        point_str = b["point"]
+        point = np.array([float(x) for x in point_str])
+        planes.append(plane)
+        plane_points.append(point)
+        if "hist" in b:
+            hists.append(b["hist"])
+        else:
+            hists.append(False)
+    for i in range(len(plane_points) - 1):
+        centers.append((plane_points[i] + plane_points[i + 1]) * 0.5)
+
+    if (reverse_bounds):
+        planes.reverse()
+        centers.reverse()
+        plane_points.reverse()
+
+    return planes, plane_points, centers, hists
+
+
+class BXDAnalysis:
+    def __init__(self, trajs, bounds, ndim: int,
+                 output_dir="analysis",
+                 prev_analysis_dir=None,
+                 bin_range=[0, None]):
+        """
+        Initialises a BXD analysis session. 
+
+        :type bin_range: list of length two
+        :type prev_analysis_dir: path
+        :type output_dir: path
+        :type bounds: json file
+        :type trajs: list of BXD output files
+        """
+        self.trajFiles = trajs
+        self.boundsFiles = bounds
+        self.ndim = ndim
+        self.outputDir = output_dir
+        self.prevAnalysis = prev_analysis_dir
+        self.BoxLowerID = bin_range[0]
+        self.BoxUpperID = bin_range[1]
+        self.bounds = None
+        self.plane_points = None
+        self.nBounds = None
+        self.hist_planes = None
+        self.hist_centers = None
+        self.hist_bools = None
+        self.hist_plane_points = None
+        self.fpt_lower_list = []
+        self.fpt_upper_list = []
+        self.hist_counts = []
+
+    def read_bounds(self, reverse_bounds=False, max_distance: float = float("inf"), x_cv_label: str = "s_1",
+                    y_cv_label: str = "s_2"):
+        """
+        Reads the bounds from file and generates histogram bins. 
+        :param reverse_bounds: Whether to reverse the order of the bounds.
+        :param max_distance: Maximum distance between bins.
+        :param x_cv_label: Label to use for plots.
+        :param y_cv_label: Label to use for plots. 
+        :return: BXD bounds, histogram planes, histogram points, histogram centers. 
+        """
+        # First read all the bounds
+        print("Reading bounds from json file:", self.boundsFiles)
+        self.bounds, self.plane_points = _read_bounds_json(
+            self.boundsFiles, reverse_bounds)[:2]
+        n_bounds = len(self.bounds)
+        self.nBounds = n_bounds
+        assert len(self.bounds) > 0, 'No bounds found!'
+
+        # If no upper box ID has been specified, then set it as last box
+        if self.BoxUpperID is None:
+            self.BoxUpperID = len(self.bounds) - 2
+
+        # Error checking
+        assert 0 <= self.BoxUpperID < len(
+            self.bounds) - 1, 'Upper Box ID must be within range 0' \
+                              'and number of bounds - 2 (' + str(len(self.bounds) - 2) + ')'
+        assert 0 <= self.BoxLowerID <= self.BoxUpperID, 'Lower Box ID must' \
+                                                        'be within range 0 and upper box ID (' + str(
+            self.BoxUpperID) + ')'
+
+        utils.make_sure_path_exists(output_dir)
+
+        # print some info about the bounds
+        for i in range(0, n_bounds - 1):
+            print('\tBox ', i, ' spans ',
+                  self.bounds[i], ' to ', self.bounds[i + 1])
+        print("Performing analysis between boxes", self.BoxLowerID, self.BoxUpperID)
+
+        if self.prevAnalysis is not None:
+            bin_file = self.prevAnalysis[0] + "/hist_bounds.json"
+            print("Reading histogram bins from file: ", bin_file)
+            self.hist_planes, self.hist_plane_points, \
+            self.hist_centers, self.hist_bools = _read_bounds_json(bin_file)
+        else:
+            # now create histogram bin planes
+            assert self.plane_points is not None, 'Need points on each plane ' \
+                                                  'please make JSON file'
+            self.hist_planes, self.hist_centers, \
+            self.hist_plane_points, self.hist_bools = CreateBisectionPlanes(
+                self.bounds[self.BoxLowerID:(self.BoxUpperID + 2)],
+                self.plane_points[self.BoxLowerID:(self.BoxUpperID + 2)], max_distance)
+        # Store the generated histogram bounds to file
+        print("Writing histogram bounds to hist_bounds.json")
+        hist_out = output_dir + "/" + "hist_bounds.json"
+        store_bounds_json(hist_out, self.hist_planes, self.hist_plane_points,
+                          self.hist_centers, self.hist_bools)
+        hist_png_out = output_dir + "/" + "hist_bounds.png"
+        print("Plotting the histogram bins to ", hist_png_out)
+        vis.plotHistogramBins(self.hist_planes, self.hist_centers, self.hist_plane_points,
+                              self.hist_bools, x_cv_label, y_cv_label, hist_png_out, contour_file)
+
+        return self.bounds, self.hist_planes, self.hist_plane_points, self.hist_centers
+
+    def analyse(self, passage_time_limit: float):
+        """
+        Analyse the trajectories. 
+        :param passage_time_limit: Minimum passage time to be considered.  
+        :return: FPTs against lower bounds, FPTs against upper bounds, and histogram counts in each bin.
+        """
+        # Get FPTs and populate histogram.
+        self.fpt_lower_list, \
+        self.fpt_upper_list, \
+        self.hist_counts = GetFPTsAndHist(self.trajFiles,
+                                          self.prevAnalysis,
+                                          self.bounds,
+                                          self.plane_points,
+                                          self.BoxLowerID,
+                                          self.BoxUpperID,
+                                          self.hist_planes,
+                                          self.hist_centers,
+                                          passage_time_limit,
+                                          self.ndim, self.nBounds - 1)
+        return self.fpt_lower_list, self.fpt_upper_list, self.hist_counts
+
+
 output_dir = "analysis"
 
-# These are the "Tableau 20" colors as RGB.
-tableau20 = [(31, 119, 180), (174, 199, 232), (255, 127, 14), (255, 187, 120),
-             (44, 160, 44), (152, 223, 138), (214, 39, 40), (255, 152, 150),
-             (148, 103, 189), (197, 176, 213), (140, 86, 75), (196, 156, 148),
-             (227, 119, 194), (247, 182, 210), (127,
-                                                127, 127), (199, 199, 199),
-             (188, 189, 34), (219, 219, 141), (23, 190, 207), (158, 218, 229)]
-tableau20 = [tuple(float(c) / 256 for c in x) for x in tableau20]
+# 2d histogram for each box
+box_counts_twod_x = []
+box_counts_twod_y = []
+
+x_cv_label = "C - D Distance (Angstrom)"
+y_cv_label = "F - D Distance (Angstrom)"
+contour_file = None
 
 
 def ComputeBoxCenters(plane_points):
@@ -135,8 +295,12 @@ def CreateBisectionPlanes(planes, plane_points, max_distance):
         if (Nbisections == 0):
             continue
         for i in range(Nbisections):
-            bisections.append(BisectPlane(a, b, frac))
-            hist_plane_points.append(ca + frac * (cb - ca))
+            new_plane = BisectPlane(a, b, frac)
+            bisections.append(new_plane)
+            plane_point = ca + frac * (cb - ca)
+            plane_point_proj = (np.dot(new_plane[:-1], plane_point) + new_plane[-1]) * new_plane[:-1]
+            plane_point = plane_point - plane_point_proj
+            hist_plane_points.append(plane_point)
             hist_bools.append(True)
             frac += step
         new_planes += bisections
@@ -181,12 +345,11 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
                 BoxUpperID=None, plot=True,
                 MaxDistance=float("inf"),
                 BinFile=None,
-                ReverseBounds=False, read_fpts=False,
-                PrevAnalysisDir=None):
+                ReverseBounds=False, PrevAnalysisDir=None):
     # First read all the bounds
     print("Reading bounds from json file:", BoundsFilename)
-    BoundaryList, plane_points = read_bounds_json(
-            BoundsFilename, ReverseBounds)[:2]
+    BoundaryList, plane_points = _read_bounds_json(
+        BoundsFilename, ReverseBounds)[:2]
     nBounds = len(BoundaryList)
     assert len(BoundaryList) > 0, 'No bounds found!'
 
@@ -195,11 +358,11 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         BoxUpperID = len(BoundaryList) - 2
 
     # Error checking
-    assert BoxUpperID >= 0 and BoxUpperID < len(
-            BoundaryList) - 1, 'Upper Box ID must be within range 0' \
-                               'and number of bounds - 2 (' + str(len(BoundaryList) - 2) + ')'
-    assert BoxLowerID >= 0 and BoxLowerID <= BoxUpperID, 'Lower Box ID must' \
-                                                         'be within range 0 and upper box ID (' + str(BoxUpperID) + ')'
+    assert 0 <= BoxUpperID < len(
+        BoundaryList) - 1, 'Upper Box ID must be within range 0' \
+                           'and number of bounds - 2 (' + str(len(BoundaryList) - 2) + ')'
+    assert 0 <= BoxLowerID <= BoxUpperID, 'Lower Box ID must' \
+                                          'be within range 0 and upper box ID (' + str(BoxUpperID) + ')'
     assert MFPTthreshold >= 0.0, 'MFPT threshold must be greater than zero'
 
     utils.make_sure_path_exists(output_dir)
@@ -213,15 +376,15 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     if BinFile is not None:
         print("Reading histogram bins from file: ", BinFile)
         hist_planes, hist_plane_points, \
-        hist_centers, hist_bools = read_bounds_json(BinFile)
+        hist_centers, hist_bools = _read_bounds_json(BinFile)
     else:
         # now create histogram bin planes
         assert plane_points is not None, 'Need points on each plane ' \
                                          'please make JSON file'
         hist_planes, hist_centers, \
         hist_plane_points, hist_bools = CreateBisectionPlanes(
-                BoundaryList[BoxLowerID:(BoxUpperID + 2)],
-                plane_points[BoxLowerID:(BoxUpperID + 2)], MaxDistance)
+            BoundaryList[BoxLowerID:(BoxUpperID + 2)],
+            plane_points[BoxLowerID:(BoxUpperID + 2)], MaxDistance)
     # Store the generated histogram bounds to file
     print("Writing histogram bounds to hist_bounds.json")
     hist_out = output_dir + "/" + "hist_bounds.json"
@@ -229,14 +392,15 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
                       hist_centers, hist_bools)
     hist_png_out = output_dir + "/" + "hist_bounds.png"
     print("Plotting the histogram bins to ", hist_png_out)
-    plotHistogramBins(hist_planes, hist_centers, hist_plane_points,
-                      hist_bools, hist_png_out)
+    vis.plotHistogramBins(hist_planes, hist_centers, hist_plane_points,
+                          hist_bools, x_cv_label, y_cv_label, hist_png_out, contour_file)
     # Get FPTs and populate histogram.
     fpt_lower_list, \
     fpt_upper_list, \
     hist_counts = GetFPTsAndHist(TrajectoryFiles,
                                  PrevAnalysisDir,
                                  BoundaryList,
+                                 plane_points,
                                  BoxLowerID,
                                  BoxUpperID,
                                  hist_planes,
@@ -273,7 +437,7 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     # normalized the raw histogram & obtain the box probability
     normalizedHistogram = open(output_dir + '/normalizedHistogram.txt', 'w')
     rawBoxNormalizedHistogram = open(
-            output_dir + '/rawBoxNormalizedHistogram.txt', 'w')
+        output_dir + '/rawBoxNormalizedHistogram.txt', 'w')
     idx = 0
     cv_dist = ComputeDistancesAlongCV(hist_centers)
     try:
@@ -311,13 +475,13 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         normalizedHistogram.close()
         rawBoxNormalizedHistogram.close()
     # Plot histograms
-    plot2D(cv_dist, normalized_hist, output_dir +
-           "/normalizedHist.png", "Distance along CV / Angstrom",
-           "$p(\\rho)$")
-    plot2D(cv_dist, np.cumsum(normalized_hist), output_dir +
-           "/normalizedHistSum.png",
-           "Distance along CV / Angstrom",
-           "$P(\\rho)$")
+    vis.plot2D(cv_dist, normalized_hist, output_dir +
+               "/normalizedHist.png", "Distance along CV / Angstrom",
+               "$p(\\rho)$")
+    vis.plot2D(cv_dist, np.cumsum(normalized_hist), output_dir +
+               "/normalizedHistSum.png",
+               "Distance along CV / Angstrom",
+               "$P(\\rho)$")
 
     print("\nThe raw histogram with each box normalized to 1 is in ",
           rawBoxNormalizedHistogram.name)
@@ -331,15 +495,15 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
         for i in range(0, len(hist_counts)):
             if (hist_counts[i] != 0):
                 free_energy.append(-1.0 * math.log(
-                        hist_counts[i] / np.linalg.norm(
-                                hist_plane_points[i + 1] - hist_plane_points[i])))
+                    hist_counts[i] / np.linalg.norm(
+                        hist_plane_points[i + 1] - hist_plane_points[i])))
 
                 string = '%s\t%s\n' % (cv_dist[i], free_energy[-1])
                 finalFreeEnergy.write(string)
             else:
                 print(
-                        "\nThe final free energy surface cannot be constructed",
-                        "because of zeros in the Histogram...\n")
+                    "\nThe final free energy surface cannot be constructed",
+                    "because of zeros in the Histogram...\n")
                 sys.exit()
     finally:
         finalFreeEnergy.close()
@@ -352,43 +516,10 @@ def BXDanalysis(TrajectoryFiles, BoundsFilename, Ndim,
     i = 0
     for hist_plane in hist_bools:
         if hist_plane is False:
-            i = (i + 1) % len(tableau20)
-        colors.append(tableau20[i])
-    plot2D(cv_dist, free_energy, free_energy_plot_file, 'Distance along CV',
-           'RT', show_plot=False, s=100, linecolor=tableau20[14], c=colors)
-
-
-def ReadThresholds(threshold_file, thresholds_lower, thresholds_upper):
-    """
-
-    Reads thresholds from file in form "boxid lower upper"
-    and updates thresholds array with those found.
-
-    """
-
-    f = open(threshold_file, 'r')
-    try:
-        for line in f:
-            fields = line.split()
-            assert len(
-                    fields) == 3, "Expected 3 fields in line in threshold file"
-            box = int(fields[0])
-            lower = float(fields[1])
-            upper = float(fields[2])
-            assert len(
-                    thresholds_upper) > box, "Box specified in thresholds file is outside range"
-            assert len(
-                    thresholds_lower) > box, "Box specified in thresholds file is outside range"
-            thresholds_lower[box] = lower
-            thresholds_upper[box] = upper
-    finally:
-        f.close()
-    for i in range(len(thresholds_lower)):
-        print("First passage times less than ", thresholds_lower[
-            i], "for box ", i, " to box ", i - 1, "will be neglected")
-        print("First passage times less than ", thresholds_upper[
-            i], "for box ", i, " to box ", i + 1, "will be neglected")
-    return thresholds_lower, thresholds_upper
+            i = (i + 1) % len(Tableau.tableau20)
+        colors.append(Tableau.tableau20[i])
+    vis.plot2D(cv_dist, free_energy, free_energy_plot_file, 'Distance along CV',
+               'RT', show_plot=False, s=100, linecolor=Tableau.tableau20[14], c=colors)
 
 
 def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
@@ -466,20 +597,20 @@ def ComputeBoxFreeEnergies(kLowerList, kUpperList, lower_fpts, upper_fpts,
     else:
         x = range(len(boxFreeEnergy))
         box_lines = []
-    plot2D(x, boxFreeEnergy, output_dir + "/boxFreeEnergy.png",
-           "Distance along CV / Angstrom", "RT",
-           color=tableau20[0],
-           error=box_energy_std,
-           ecolor=tableau20[4], capthick=2, s=2)
-    plot2D(x, boxFreeEnergy, output_dir +
-           "/boxFreeEnergyCumError.png", "Distance along CV / Angstrom", "RT",
-           color=tableau20[0], error=
-           box_energy_std_cuml, ecolor=tableau20[0], capthick=2, s=2)
-    plot2D(x, np.cumsum(boxProbability), output_dir +
-           "/boxProbability.png", "Distance along CV / Angstrom ", "$P_n$",
-           ylimits=[-0.1, 1.1],
-           color=tableau20[0],
-           s=10)
+    vis.plot2D(x, boxFreeEnergy, output_dir + "/boxFreeEnergy.png",
+               "Distance along CV / Angstrom", "RT",
+               color=Tableau.tableau20[0],
+               error=box_energy_std,
+               ecolor=Tableau.tableau20[4], capthick=2, s=2)
+    vis.plot2D(x, boxFreeEnergy, output_dir +
+               "/boxFreeEnergyCumError.png", "Distance along CV / Angstrom", "RT",
+               color=Tableau.tableau20[0], error=
+               box_energy_std_cuml, ecolor=Tableau.tableau20[0], capthick=2, s=2)
+    vis.plot2D(x, np.cumsum(boxProbability), output_dir +
+               "/boxProbability.png", "Distance along CV / Angstrom ", "$P_n$",
+               ylimits=[-0.1, 1.1],
+               color=Tableau.tableau20[0],
+               s=10)
     return boxFreeEnergy, boxProbability, box_energy_std_cuml
 
 
@@ -517,50 +648,6 @@ def store_bounds_json(json_file, planes, points, centers, hists):
         f.write(data_json_string)
     finally:
         f.close()
-
-
-def read_bounds_json(json_file, reverse_bounds=False):
-    """
-    Reads the bounds json file outputted by adaptive bxd.
-    Will then compute centers of boxes from the plane points
-
-    Args:
-        json_file (str) : path and file name of json bounds file
-        ndim (int) : number of dimensions of CVs
-        reverse_bounds=False (bool) : whether to reverse the direction of
-            bounds
-    """
-
-    assert isinstance(json_file, str), "Json_file is not a string"
-
-    json_data = open(json_file).read()
-    data = json.loads(json_data)
-
-    planes = []
-    plane_points = []
-    centers = []
-    hists = []
-    bounds = data["bounds"]
-    for b in bounds:
-        p = b["plane"]
-        plane = np.array([float(x) for x in p])
-        point_str = b["point"]
-        point = np.array([float(x) for x in point_str])
-        planes.append(plane)
-        plane_points.append(point)
-        if "hist" in b:
-            hists.append(b["hist"])
-        else:
-            hists.append(False)
-    for i in range(len(plane_points) - 1):
-        centers.append((plane_points[i] + plane_points[i + 1]) * 0.5)
-
-    if (reverse_bounds):
-        planes.reverse()
-        centers.reverse()
-        plane_points.reverse()
-
-    return planes, plane_points, centers, hists
 
 
 def IsInsideBox(rho, lowerbound, upperbound, ndim, debug=False):
@@ -669,6 +756,7 @@ def UpdateBoundaryFPT(FPT_list, boundary_hit, boundary_test, found_hit,
 def GetFPTsAndHist(trajectory_files,
                    prev_analysis_dir,
                    BoundaryList,
+                   plane_points,
                    BoxLowerID,
                    BoxUpperID,
                    bin_planes,
@@ -687,6 +775,11 @@ def GetFPTsAndHist(trajectory_files,
     fpt_lower_list = [[] for x in range(nBoxes)]
     fpt_upper_list = [[] for x in range(nBoxes)]
     counts = [0.0] * (nbins)
+
+    global box_counts_twod_x
+    box_counts_twod_x = [[] for x in range(nBoxes)]
+    global box_counts_twod_y
+    box_counts_twod_y = [[] for x in range(nBoxes)]
 
     # loop over any precomputed histogram files (RawHistogram.txt)
     if prev_analysis_dir is not None:
@@ -731,6 +824,7 @@ def GetFPTsAndHist(trajectory_files,
                 for i in range(len(counts)):
                     counts[i] += new_counts[i]
 
+    heatmap_dir = output_dir + "/2D_Histograms"
     # output FPTs to save repeat analysis time
     for boxIdx in range(BoxLowerID, BoxUpperID + 1):
         fpt_dir = output_dir + "/FPT_arrays"
@@ -739,14 +833,29 @@ def GetFPTsAndHist(trajectory_files,
         lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
         lowerFile = open(lower_fpt_name, 'w')
         for fpt in fpt_lower_list[boxIdx]:
-            print(str(fpt), file=lowerFile)
+            print("{0},{1}".format(fpt[0], fpt[1]), file=lowerFile)
         lowerFile.close()
 
         upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
         upperFile = open(upper_fpt_name, 'w')
         for fpt in fpt_upper_list[boxIdx]:
-            print(str(fpt), file=upperFile)
+            print("{0},{1}".format(fpt[0], fpt[1]), file=upperFile)
         upperFile.close()
+
+        # TODO generalise this.
+        # produce heat maps for each box.
+        utils.make_sure_path_exists(heatmap_dir)
+        # can only do this if we've gathered data from a trajectory, it is not stored.
+        if trajectory_files != None and len(trajectory_files) > 0:
+            vis.plot_box_2d_hist(box_counts_twod_x, box_counts_twod_y, BoundaryList, plane_points, boxIdx, x_cv_label,
+                                 y_cv_label,
+                                 heatmap_dir + "/box_" + str(boxIdx) + ".png")
+    if trajectory_files != None and len(trajectory_files) > 0:
+        vis.plot_time_in_boxes(box_counts_twod_x, box_counts_twod_y, "time_in_box.png")
+        print("plotting all 2d boxes")
+        vis.plot_all_box_2d_hist(box_counts_twod_x, box_counts_twod_y, BoundaryList, plane_points,
+                                 x_cv_label, y_cv_label, heatmap_dir + "/all_boxes.png")
+
     print("FPTs outputted to " + fpt_dir)
 
     # write out the raw histogram
@@ -856,6 +965,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
             if current_box_id is not None and time - last_time > max_steps:
                 FoundFirstUpperHit[current_box_id] = False
                 FoundFirstLowerHit[current_box_id] = False
+
             last_time = time
             # perform histogram filling on lines that are not inversions.
             stride = 100
@@ -872,6 +982,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                 # if in current box, add it to counts
                 if in_box:
                     tmp_counts[bin_num] += 1
+
                 # if not in box, then need to find the bin
                 elif in_box is not None:
                     find_bin = True
@@ -890,6 +1001,10 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 i = i + 1
                         else:
                             break
+                # this check is not totally correct, a small number will be dropped when crossing boundary.
+                if IsInsideBox(cv, bounds[current_box_id], bounds[current_box_id + 1], ndim, False):
+                    box_counts_twod_x[current_box_id].append(cv[0])
+                    box_counts_twod_y[current_box_id].append(cv[1])
 
             # perform FPT calculations on lines that are inversions
             if len(linelist) > ndim + 1:
@@ -914,7 +1029,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                     box_list += range(LowerBoxID, UpperBoxID + 1)
                     for i in box_list:
                         in_box = IsInsideBox(
-                                cv, bounds[i], bounds[i + 1], ndim, debug)
+                            cv, bounds[i], bounds[i + 1], ndim, debug)
                         if in_box is None:
                             new_box_id = current_box_id
                             break
@@ -941,7 +1056,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                         print("Odd line, skipping:", line)
                         continue
                     boundary_hit = np.array(
-                            [float(x) for x in linelist[ndim + 1:]])
+                        [float(x) for x in linelist[ndim + 1:]])
 
                     valid = True
                     if np.allclose(boundary_hit, bounds[current_box_id + 1]):
@@ -967,7 +1082,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 print("Found short passage time at step",
                                       hit_time)
                             else:
-                                FPT_list.append(passageTime)
+                                FPT_list.append([hit_time, passageTime])
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:
@@ -1002,7 +1117,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 print("Found short passage time at step",
                                       hit_time)
                             else:
-                                FPT_list.append(passageTime)
+                                FPT_list.append([hit_time, passageTime])
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:
@@ -1035,176 +1150,6 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
     return LowerFPTs, UpperFPTs, counts
 
 
-def plot2D(x, y, outputfile, xlabel, ylabel, xlimits=None, show_plot=False,
-           ylimits=None, ylines=None, linecolor=tableau20[0], **kwargs):
-    """
-    Useful little plotter. Any arguments to ax.scatter can be added to kwargs
-    """
-    # You typically want your plot to be ~1.33x wider than tall.
-    # Common sizes: (10, 7.5) and (12, 9)
-    fig = plt.figure(figsize=(9, 9))
-
-    ax = fig.add_subplot(111)
-
-    # Ensure that the axis ticks only show up on the bottom and left of the
-    # plot.
-    # Ticks on the right and top of the plot are generally unnecessary
-    # chartjunk.
-    ax.get_xaxis().tick_bottom()
-    ax.get_yaxis().tick_left()
-
-    ax.set_xlabel(xlabel, fontsize=24)
-    ax.set_ylabel(ylabel, fontsize=24)
-    ax.tick_params(axis='x', labelsize='22')
-    ax.tick_params(axis='y', labelsize='22')
-
-    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-    ax.yaxis.set_major_formatter(y_formatter)
-
-    if xlimits is not None:
-        ax.set_xlim(xlimits[0], xlimits[1])
-    if ylimits is not None:
-        ax.set_ylim(ylimits[0], ylimits[1])
-
-    error_bar = False
-    error_kwargs = dict()
-    if 'error' in kwargs:
-        error_bar = True
-        err = kwargs['error']
-        del kwargs['error']
-        error_kwargs['fmt'] = 'none'
-        error_options = ['capthick', 'ecolor', 'elinewidth', 'capsize']
-        for s in error_options:
-            if s in kwargs:
-                error_kwargs[s] = kwargs[s]
-                del kwargs[s]
-    if error_bar:
-        ax.errorbar(x, y, yerr=err, **error_kwargs)
-    ax.plot(x, y, lw=1.5, alpha=1.0, color=linecolor)
-    # maintain x and y limits, as scatter seems to break them.
-    xlim = ax.get_xlim()
-    ylim = ax.get_ylim()
-    ax.scatter(x, y, **kwargs)
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    if ylines is not None:
-        y = ax.get_ylim()
-        for x_val in ylines:
-            x = [x_val] * len(y)
-            ax.plot(x, y, color="black", ls='--')
-    if 'label' in kwargs:
-        ax.legend()
-
-    plt.savefig(outputfile, bbox_inches="tight")
-    if show_plot:
-        plt.show()
-    plt.close()
-
-
-def plotDecay(decay_array, outputfile, label, color_id):
-    keylist = list(decay_array.keys())
-    keylist.sort()
-    values = []
-    for k in keylist:
-        if decay_array[k] > 0:
-            values.append(math.log(decay_array[k]))
-        else:
-            values.append(0)
-
-    plot2D(keylist, values, outputfile, "FPT", "ln R(t)", label=label,
-           linecolor=tableau20[color_id], s=8)
-
-
-def plotBoxPlot(boxes, labels, xlabel, ylabel, output, **kwargs):
-    fig, axarr = plt.subplots(2)
-
-    for ax, box, label in zip(axarr, boxes, labels):
-        ax.get_xaxis().tick_bottom()
-        ax.get_yaxis().tick_left()
-
-        ax.set_xlabel(xlabel, fontsize=24)
-        ax.set_ylabel(ylabel, fontsize=24)
-        ax.tick_params(axis='x', labelsize='22')
-        ax.tick_params(axis='y', labelsize='22')
-
-        # y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-        # ax.yaxis.set_major_formatter(y_formatter)
-        ax.set_yscale('log')
-        ax.boxplot(box, labels=[label], showmeans=True, **kwargs)
-
-    plt.savefig(output, bbox_inches="tight")
-    plt.close()
-
-
-def plotHistogramBins(planes, bin_centers, plane_points, hist_bools, output):
-    """
-    Plots the planes used for histogram binning, along with the line
-    through the centers of the bins used to define the reaction coordinate
-    for the free energy plot
-    """
-
-    fig = plt.figure(figsize=(10, 10), dpi=100)
-    ax = fig.add_subplot(111)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    ax.get_xaxis().tick_bottom()
-    ax.get_yaxis().tick_left()
-
-    y_formatter = mpl.ticker.ScalarFormatter(useOffset=False)
-    ax.yaxis.set_major_formatter(y_formatter)
-    ax.tick_params(axis='x', labelsize='20')
-    ax.tick_params(axis='y', labelsize='20')
-
-    x_min = min([x[0] for x in ((bin_centers + plane_points))])
-    y_min = min([y[1] for y in ((bin_centers + plane_points))])
-    x_max = max([x[0] for x in ((bin_centers + plane_points))])
-    y_max = max([y[1] for y in ((bin_centers + plane_points))])
-    x_min = x_min - 0.05 * abs(x_max - x_min)
-    x_max = x_max + 0.05 * abs(x_max - x_min)
-    y_min = y_min - 0.05 * abs(y_max - y_min)
-    y_max = y_max + 0.05 * abs(y_max - y_min)
-
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-
-    bound_length = 0.4
-    box_id = 0
-    for b, point, hist in zip(planes, plane_points, hist_bools):
-        if abs(b[1]) < 0.01:
-            lower = max(y_min, point[1] - bound_length * 0.5)
-            upper = min(y_max, point[1] + bound_length * 0.5)
-            y = np.array(np.linspace(lower, upper))
-            x = [-(b[2] / b[0])] * len(y)
-        else:
-            norm_perp = np.array([-b[1], b[0]])
-            point_np = np.array(point)
-            x1 = (bound_length * 0.5 * norm_perp + point_np)[0]
-            x2 = (point_np - bound_length * 0.5 * norm_perp)[0]
-            lower = min(x1, x2)
-            upper = max(x1, x2)
-            # lower = 0.0
-            x = np.array(np.linspace(lower, upper))
-            y = [(-b[0] * v - b[2]) / b[1] for v in x]
-        if hist:
-            bline, = ax.plot(x, y, ls=":", lw=1.2, color="black", alpha=0.8)
-        else:
-            bline, = ax.plot(x, y, "-", lw=1.2, color="black", alpha=1.0)
-            box_id += 1
-
-    c_x = [x[0] for x in bin_centers]
-    c_y = [y[1] for y in bin_centers]
-    ax.plot(c_x, c_y, "--", marker="o", lw=1.0, ms=5, color=tableau20[14])
-    print("plane points: ", plane_points)
-    points_x = [x[0] for x in plane_points]
-    points_y = [y[1] for y in plane_points]
-    ax.plot(points_x, points_y, marker="o", lw=1.0, ms=10, color=tableau20[14])
-
-    ax.set_title("Histogram Bins", y=1.06, fontsize=22)
-    plt.savefig(output, bbox_inches="tight")
-    plt.close()
-
-
 def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
     """
     Read FPTs that have been precomputed by GetFirstPassageTimesAllBoxes
@@ -1216,53 +1161,17 @@ def ReadFPTs(fpt_dir, lower_box, upper_box, nboxes):
         lower_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx - 1)
         lowerFile = open(lower_fpt_name)
         for fpt in lowerFile:
-            LowerFPTs[boxIdx].append(float(fpt))
+            # read time and passage time
+            LowerFPTs[boxIdx].append([float(x) for x in fpt.split(',')])
         lowerFile.close()
 
         upper_fpt_name = fpt_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
         upperFile = open(upper_fpt_name)
         for fpt in upperFile:
-            UpperFPTs[boxIdx].append(float(fpt))
+            UpperFPTs[boxIdx].append([float(x) for x in fpt.split(',')])
         upperFile.close()
 
     return LowerFPTs, UpperFPTs
-
-
-def HistogramFPTs(Upper, Lower, bin):
-    """
-    Produce histograms of upper and lower FPTs
-    """
-
-    Upper = np.array(Upper)
-    Lower = np.array(Lower)
-    upper_str = str(bin) + " - Upper "
-
-    upper_bins = 10 ** np.linspace(np.log10(min(Upper)), np.log10(max(Upper)))
-    lower_bins = 10 ** np.linspace(np.log10(min(Lower)), np.log10(max(Lower)))
-
-    ab_min = min(min(Upper), min(Lower))
-    ab_max = max(max(Upper), max(Lower))
-    f, axarr = plt.subplots(2)
-    n, b, p = axarr[0].hist(
-            Upper, upper_bins, alpha=0.5, label=upper_str, color='g')
-    axarr[0].set_xscale('log')
-    axarr[0].set_xlim(ab_min, ab_max)
-    axarr[0].set_ylabel("Count")
-    axarr[0].legend()
-
-    lower_str = str(bin) + " - Lower "
-
-    n, b, p = axarr[1].hist(
-            Lower, lower_bins, alpha=0.5, label=lower_str, color='b')
-    axarr[1].set_xscale('log')
-    axarr[1].set_xlim(ab_min, ab_max)
-    axarr[1].set_ylabel("Count")
-    axarr[1].legend()
-    FPT_hist_path = output_dir + "/FPT_histograms"
-    utils.make_sure_path_exists(FPT_hist_path)
-    plt.savefig(
-            FPT_hist_path + "/" + str(bin).zfill(2) + ".png", bbox_inches="tight")
-    plt.close()
 
 
 def reject_outliers(Upper, Lower, bin, threshold_lower=0.0,
@@ -1330,20 +1239,20 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
           box_plot_dir)
     for boxIdx in range(LowerBoxID, UpperBoxID + 1):
 
-        lower_fpts = LowerFPTs[boxIdx]
-        upper_fpts = UpperFPTs[boxIdx]
+        lower_fpts = np.array(LowerFPTs[boxIdx])
+        upper_fpts = np.array(UpperFPTs[boxIdx])
 
         boxplotname = box_plot_dir + "/" + str(boxIdx)
-        plotBoxPlot([lower_fpts, upper_fpts],
-                    [str(boxIdx) + " to " + str(boxIdx - 1),
-                     str(boxIdx) + " to " + str(boxIdx + 1)],
-                    "Box", "FPT", boxplotname)
+        vis.plotBoxPlot([lower_fpts[:, 1], upper_fpts[:, 1]],
+                        [str(boxIdx) + " to " + str(boxIdx - 1),
+                         str(boxIdx) + " to " + str(boxIdx + 1)],
+                        "Box", "FPT", boxplotname)
 
-        Initial = len(lower_fpts)
+        fpt_count = len(lower_fpts)
         decay_dir = output_dir + "/decays"
         utils.make_sure_path_exists(decay_dir)
-        if (Initial != 0):
-            MFPT = np.mean(lower_fpts)
+        if (fpt_count != 0):
+            MFPT = np.mean(lower_fpts[:, 1])
             mfpts.append(MFPT)
             klower[boxIdx] = 1 / MFPT
 
@@ -1361,26 +1270,26 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
             color = boxIdx
 
             # Plot the decay profile
-            plotDecay(LowerDecayArray, lowerDecayPlotName, plotlabel, color)
+            vis.plotDecay(LowerDecayArray, lowerDecayPlotName, plotlabel, color)
 
             keylist = list(LowerDecayArray.keys())
             keylist.sort()
             lowerFile = open(lowerFileName, 'w')
-            lowerFile.write('0.0\t%s\n' % (Initial))
+            lowerFile.write('0.0\t%s\n' % (fpt_count))
             # plotDecayArray()
             for key in keylist:
                 lowerFile.write(
-                        '%s\t%s\n' % (str(key), (LowerDecayArray[key])))
+                    '%s\t%s\n' % (str(key), (LowerDecayArray[key])))
             lowerFile.close()
         else:
             print("\tbox %s to box %s = N/A " % (boxIdx, boxIdx - 1))
             klower[boxIdx] = 0.0
 
         # Upper FPTs
-        Initial = len(upper_fpts)
+        fpt_count = len(upper_fpts)
 
-        if (Initial != 0):
-            MFPT = np.mean(upper_fpts)
+        if (fpt_count != 0):
+            MFPT = np.mean(upper_fpts[:, 1])
             kupper[boxIdx] = 1 / MFPT
 
             upperFileName = decay_dir + '/%sto%s.txt' % (boxIdx, boxIdx + 1)
@@ -1397,15 +1306,15 @@ def ComputeMFPTs(LowerFPTs, UpperFPTs, bounds, LowerBoxID, UpperBoxID):
             plotlabel = str(boxIdx) + " to " + str(boxIdx + 1)
             color = boxIdx
 
-            plotDecay(UpperDecayArray, upperDecayPlotName, plotlabel, color)
+            vis.plotDecay(UpperDecayArray, upperDecayPlotName, plotlabel, color)
 
             keylist = list(UpperDecayArray.keys())
             keylist.sort()
             upperFile = open(upperFileName, 'w')
-            upperFile.write('0.0\t%s\n' % (Initial))
+            upperFile.write('0.0\t%s\n' % (fpt_count))
             for key in keylist:
                 upperFile.write(
-                        '%s\t%s\n' % (str(key), (UpperDecayArray[key])))
+                    '%s\t%s\n' % (str(key), (UpperDecayArray[key])))
             upperFile.close()
         else:
             print("\tbox %s to box %s = N/A " % (boxIdx, boxIdx + 1))
@@ -1478,35 +1387,36 @@ if __name__ == "__main__":
     # Required arguments
     argparser.add_argument("bounds", help="File containing the BXD bounds")
     argparser.add_argument(
-            "ndim", help="Number of dimensions of BXD boundaries", type=int)
+        "ndim", help="Number of dimensions of BXD boundaries", type=int)
     argparser.add_argument("--trajectory", nargs='+',
                            help="Path of BXD output file(s)")
     argparser.add_argument("--prev_analysis", nargs='+',
                            help=("Directory/Directories of previous analysis",
                                  "performed with this script"))
     argparser.add_argument(
-            "--fpt_threshold",
-            help=("FPT threshold, any FPTs less than the given value",
-                  "will be discarded. Default 0.0"), type=float)
+        "--fpt_threshold",
+        help=("FPT threshold, any FPTs less than the given value",
+              "will be discarded. Default 0.0"), type=float)
     argparser.add_argument(
-            "--lower_box_id", help="Lower BXD box number to be used in analysis",
-            type=int)
+        "--lower_box_id", help="Lower BXD box number to be used in analysis",
+        type=int)
     argparser.add_argument(
-            "--upper_box_id", help="Upper BXD box number to be used in analysis",
-            type=int)
+        "--upper_box_id", help="Upper BXD box number to be used in analysis",
+        type=int)
     argparser.add_argument(
-            "--histogram_bin_width",
-            help="The maximum size for a histogram bin.",
-            type=float)
+        "--histogram_bin_width",
+        help="The maximum size for a histogram bin.",
+        type=float)
     argparser.add_argument(
-            "--histogram_json_file",
-            help="A file containing planes to use as histogram bins",
-            type=str)
+        "--histogram_json_file",
+        help="A file containing planes to use as histogram bins",
+        type=str)
     argparser.add_argument(
-            "--reverse_boxes", help="Reverse the direction of the boxes",
-            action="store_true")
+        "--reverse_boxes", help="Reverse the direction of the boxes",
+        action="store_true")
     argparser.add_argument(
-            "--output_dir", help="Output directory, default: analysis")
+        "--output_dir", help="Output directory, default: analysis")
+
     args = argparser.parse_args()
     bounds_file = args.bounds
     ndim = args.ndim
