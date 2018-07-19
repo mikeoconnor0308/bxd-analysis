@@ -2,8 +2,8 @@ import math
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import bxd.utils as utils
-from bxd.tableau import Tableau
+import bxd.bxd.utility as utils
+from bxd.bxd.tableau import Tableau
 from matplotlib.colors import LogNorm
 from matplotlib.mlab import griddata
 

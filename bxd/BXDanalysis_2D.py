@@ -5,7 +5,7 @@ import math
 import sys
 
 import numpy as np
-import bxd.utils
+import bxd.utility
 import bxd.visualisation as vis
 from bxd.tableau import Tableau
 
@@ -965,7 +965,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 print("Found short passage time at step",
                                       hit_time)
                             else:
-                                FPT_list.append(passageTime)
+                                FPT_list.append(tuple(hit_time, passageTime))
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:
@@ -1000,7 +1000,7 @@ def GetFPTsAndHistFromTraj(opfilename, bounds, LowerBoxID, UpperBoxID,
                                 print("Found short passage time at step",
                                       hit_time)
                             else:
-                                FPT_list.append(passageTime)
+                                FPT_list.append(tuple(hit_time, passageTime))
                                 last_hit_time = hit_time
                                 numhits = numhits + 1
                         else:

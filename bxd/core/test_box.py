@@ -1,6 +1,6 @@
 from unittest import TestCase
-from core.bound import Bound
-from core.box import Box
+from bxd.core.bound import Bound
+from bxd.core.box import Box
 import numpy as np
 
 class TestBox(TestCase):
