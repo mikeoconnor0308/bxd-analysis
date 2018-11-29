@@ -1,6 +1,5 @@
 # BXD Analysis
-A set of scripts for analysing a BXD trajectory. [![DOI](https://zenodo.org/badge/159704268.svg)](https://zenodo.org/badge/latestdoi/159704268)
-
+A set of scripts for analysing a BXD trajectory.
 
 ## Getting Started
 
